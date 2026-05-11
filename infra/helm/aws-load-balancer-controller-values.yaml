@@ -1,0 +1,33 @@
+clusterName: ${CLUSTER_NAME}
+region: ${AWS_REGION}
+vpcId: ${VPC_ID}
+
+keepTLSSecret: true
+
+serviceAccount:
+  create: true
+  name: aws-load-balancer-controller
+  annotations:
+    eks.amazonaws.com/role-arn: ${LOAD_BALANCER_CONTROLLER_ROLE_ARN}
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  fsGroup: 65534
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  capabilities:
+    drop:
+      - ALL

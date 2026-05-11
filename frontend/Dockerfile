@@ -19,8 +19,8 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Baked at build time for standalone client bundle (override in CI / docker build --build-arg)
-ARG NEXT_PUBLIC_API_URL=https://regulatory_assistant.lotorlab.com
-ARG NEXT_PUBLIC_AGENT_WS_URL=wss://regulatory_assistant.lotorlab.com/ws
+ARG NEXT_PUBLIC_API_URL=https://regulatory-assistant.lotorlab.com
+ARG NEXT_PUBLIC_AGENT_WS_URL=wss://regulatory-assistant.lotorlab.com/ws
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_AGENT_WS_URL=$NEXT_PUBLIC_AGENT_WS_URL
 

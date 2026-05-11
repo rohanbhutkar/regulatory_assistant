@@ -1,8 +1,13 @@
 # Deploying Regulatory Assistant (Lotor Lab)
 
-Target site: **`https://regulatory_assistant.lotorlab.com`**.
+## Choose a path
 
-This repo borrows the **deployment ideas** from the **TIME_build** repository (same layout under your `Documents updated` tree): GitHub Actions → container images, TLS at the edge, reverse proxy for API + WebSocket + Next.js, and an optional **AWS OIDC bootstrap** CloudFormation stack. It does **not** copy the full EKS / CloudFront / S3 stack by default—that path is large and account-specific; see [Full AWS (TIME_build–style)](#optional-full-aws-time_buildstyle) below.
+| Path | Documentation |
+|------|----------------|
+| **AWS — EKS + ALB + CloudFront** (mirrors **TIME_build**) | **[infra/aws/README.md](./aws/README.md)** |
+| **GHCR + VM + Caddy** | Path A below |
+
+Public hostname used in AWS templates defaults to **`regulatory-assistant.lotorlab.com`** (hyphenated for DNS).
 
 ---
 
@@ -29,7 +34,7 @@ Create a record (name depends on your DNS UI; values illustrative):
 |------|----------------|--------|
 | `A` or `CNAME` | `regulatory_assistant` | Your server’s public IP or hostname |
 
-Use the exact hostname your users will open: `regulatory_assistant.lotorlab.com`.
+Use the hostname your users will open (e.g. `regulatory-assistant.lotorlab.com`).
 
 ### A2. GitHub Container Registry
 
@@ -77,8 +82,8 @@ docker compose --env-file /opt/regulatory-assistant/.env up -d
 Smoke checks:
 
 ```bash
-curl -fsS https://regulatory_assistant.lotorlab.com/health
-curl -fsSI https://regulatory_assistant.lotorlab.com/
+curl -fsS https://regulatory-assistant.lotorlab.com/health
+curl -fsSI https://regulatory-assistant.lotorlab.com/
 ```
 
 ---
@@ -107,35 +112,11 @@ Copy output **`GitHubDeployRoleArn`** into GitHub → **Settings → Secrets and
 
 - `AWS_ROLE_TO_ASSUME` = that ARN  
 
-Then wire a new workflow with `aws-actions/configure-aws-credentials` + OIDC (`id-token: write`), following `.github/workflows/deploy-dev.yml` in `TIME_build`.
+OIDC is required for **`.github/workflows/deploy-aws-dev.yml`**; use the same role ARN as **`AWS_ROLE_TO_ASSUME`**.
 
 ---
 
-## Optional: full AWS (TIME_build–style)
-
-`TIME_build` adds:
-
-- ACM certificates (edge `us-east-1` + regional ALB cert)
-- CloudFormation platform stack (EKS, ECR, S3, …)
-- Helm AWS Load Balancer Controller
-- `infra/k8s/dev/backend.yaml` patched with image URI + secrets
-- CloudFront + WAF in front of S3 static site + API origin
-
-To reuse that pattern for Lotor:
-
-1. Copy `TIME_build/infra/` (CloudFormation + Helm + k8s) into this repo under `infra/aws/` (or keep a submodule).
-2. Global replace project identifiers (`psidium-time` → `lotor-regulatory-assistant`, domains → `regulatory_assistant.lotorlab.com` / API hostnames you choose).
-3. Change the **backend image build** to this repo’s Dockerfile (`backend/Dockerfile`, port **8001**, `uvicorn main_complete:app`).
-4. Change **frontend build** from static `out/` export to either:
-   - **Container on EKS** for Next.js, or  
-   - **Amplify / Vercel** for Next and keep only API on EKS, or  
-   - **Next `output: 'export'`** only if you drop non-static features (WebSockets need a live Next server or same-origin proxy).
-
-The regulatory app relies on **WebSockets** and **many dynamic routes**; a plain S3-only static export is usually **not** enough without architectural changes.
-
----
-
-## Checklist for `regulatory_assistant.lotorlab.com`
+## Checklist (VM + Caddy path)
 
 - [ ] DNS `A`/`CNAME` → server or load balancer  
 - [ ] GHCR images built with correct `NEXT_PUBLIC_*` (workflow inputs or Dockerfile defaults)  

@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ACM certificate request and DNS validation for Regulatory Assistant (Lotor Lab) dev.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: lotor-regulatory-assistant
+  Environment:
+    Type: String
+    Default: dev
+  DevDomainName:
+    Type: String
+    Default: regulatory-assistant.lotorlab.com
+  ApiDomainName:
+    Type: String
+    Default: api.regulatory-assistant.lotorlab.com
+  OriginApiDomainName:
+    Type: String
+    Default: origin-api.regulatory-assistant.lotorlab.com
+
+Resources:
+  CertificateRequestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-${AWS::Region}-certificate-request
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: acm-certificate-request
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - acm:AddTagsToCertificate
+                  - acm:DeleteCertificate
+                  - acm:DescribeCertificate
+                  - acm:RequestCertificate
+                Resource: "*"
+
+  CertificateRequestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-${AWS::Region}-certificate-request
+      Description: Requests an ACM DNS-validated certificate and returns external DNS validation records.
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CertificateRequestRole.Arn
+      Timeout: 120
+      Code:
+        ZipFile: |
+          import hashlib
+          import json
+          import time
+          import urllib.request
+
+          import boto3
+
+          acm = boto3.client("acm")
+
+          def respond(event, context, status, data, physical_id=None, reason=None):
+              body = {
+                  "Status": status,
+                  "Reason": reason or f"See CloudWatch Logs: {context.log_stream_name}",
+                  "PhysicalResourceId": physical_id or context.log_stream_name,
+                  "StackId": event["StackId"],
+                  "RequestId": event["RequestId"],
+                  "LogicalResourceId": event["LogicalResourceId"],
+                  "NoEcho": False,
+                  "Data": data,
+              }
+              encoded = json.dumps(body).encode("utf-8")
+              req = urllib.request.Request(
+                  event["ResponseURL"],
+                  data=encoded,
+                  headers={"content-type": "", "content-length": str(len(encoded))},
+                  method="PUT",
+              )
+              urllib.request.urlopen(req, timeout=10)
+
+          def validation_records(certificate_arn):
+              for _ in range(30):
+                  cert = acm.describe_certificate(CertificateArn=certificate_arn)["Certificate"]
+                  records = []
+                  for option in cert.get("DomainValidationOptions", []):
+                      rr = option.get("ResourceRecord")
+                      if rr:
+                          records.append(
+                              {
+                                  "DomainName": option.get("DomainName", ""),
+                                  "Name": rr.get("Name", ""),
+                                  "Type": rr.get("Type", ""),
+                                  "Value": rr.get("Value", ""),
+                              }
+                          )
+                  if records:
+                      return records
+                  time.sleep(2)
+              return []
+
+          def request_certificate(props):
+              names = [props["DevDomainName"], props["ApiDomainName"], props["OriginApiDomainName"]]
+              token = hashlib.sha256(("|".join(names)).encode("utf-8")).hexdigest()[:32]
+              response = acm.request_certificate(
+                  DomainName=props["DevDomainName"],
+                  SubjectAlternativeNames=[props["ApiDomainName"], props["OriginApiDomainName"]],
+                  ValidationMethod="DNS",
+                  IdempotencyToken=token,
+                  Tags=[
+                      {"Key": "Project", "Value": props["ProjectName"]},
+                      {"Key": "Environment", "Value": props["Environment"]},
+                  ],
+              )
+              return response["CertificateArn"]
+
+          def handler(event, context):
+              try:
+                  request_type = event["RequestType"]
+                  props = event.get("ResourceProperties", {})
+                  old_physical_id = event.get("PhysicalResourceId")
+
+                  if request_type == "Delete":
+                      if old_physical_id and old_physical_id.startswith("arn:"):
+                          try:
+                              acm.delete_certificate(CertificateArn=old_physical_id)
+                          except Exception as exc:
+                              if "ResourceInUseException" not in str(exc) and "ResourceNotFoundException" not in str(exc):
+                                  raise
+                      respond(event, context, "SUCCESS", {}, physical_id=old_physical_id)
+                      return
+
+                  certificate_arn = old_physical_id if old_physical_id and old_physical_id.startswith("arn:") else request_certificate(props)
+                  records = validation_records(certificate_arn)
+                  data = {
+                      "CertificateArn": certificate_arn,
+                      "DomainValidationRecords": json.dumps(records, separators=(",", ":")),
+                  }
+                  respond(event, context, "SUCCESS", data, physical_id=certificate_arn)
+              except Exception as exc:
+                  respond(event, context, "FAILED", {}, reason=str(exc))
+
+  DevCertificate:
+    Type: Custom::ExternalDnsAcmCertificate
+    Properties:
+      ServiceToken: !GetAtt CertificateRequestFunction.Arn
+      ProjectName: !Ref ProjectName
+      Environment: !Ref Environment
+      DevDomainName: !Ref DevDomainName
+      ApiDomainName: !Ref ApiDomainName
+      OriginApiDomainName: !Ref OriginApiDomainName
+
+Outputs:
+  CertificateArn:
+    Description: ACM certificate ARN for CloudFront and ALB once DNS validation completes.
+    Value: !GetAtt DevCertificate.CertificateArn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-certificate-arn
+  DomainValidationRecords:
+    Description: JSON array of DNS CNAME records to add at the external DNS provider.
+    Value: !GetAtt DevCertificate.DomainValidationRecords

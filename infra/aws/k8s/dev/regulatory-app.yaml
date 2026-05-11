@@ -1,0 +1,305 @@
+# Patched at deploy time: ${AWS_REGION}, ${BACKEND_IMAGE_URI}, ${FRONTEND_IMAGE_URI},
+# ${CERTIFICATE_ARN}, ${ALB_SECURITY_GROUP_ID}, ${PUBLIC_SUBNET_IDS}, ${ORIGIN_API_HOST}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: regulatory-dev
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: regulatory-backend
+  namespace: regulatory-dev
+  annotations:
+    eks.amazonaws.com/role-arn: ${BACKEND_SERVICE_ROLE_ARN}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: regulatory-backend
+  namespace: regulatory-dev
+  labels:
+    app.kubernetes.io/name: regulatory-backend
+    app.kubernetes.io/part-of: lotor-regulatory-assistant
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 1800
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: regulatory-backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: regulatory-backend
+        app.kubernetes.io/part-of: lotor-regulatory-assistant
+    spec:
+      serviceAccountName: regulatory-backend
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 512Mi
+      containers:
+        - name: backend
+          image: ${BACKEND_IMAGE_URI}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: AWS_REGION
+              value: ${AWS_REGION}
+            - name: AWS_DEFAULT_REGION
+              value: ${AWS_REGION}
+            - name: HOME
+              value: /tmp
+            - name: MPLCONFIGDIR
+              value: /tmp/matplotlib
+            - name: REGULATORY_ORIGIN_VERIFY_HEADER_NAME
+              value: X-Origin-Verify
+            - name: REGULATORY_ORIGIN_VERIFY_HEADER_VALUE
+              valueFrom:
+                secretKeyRef:
+                  name: regulatory-origin-verify
+                  key: value
+            - name: REGULATORY_CORS_ORIGINS
+              value: ${REGULATORY_CORS_ORIGINS}
+          envFrom:
+            - secretRef:
+                name: regulatory-backend-env
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            httpGet:
+              path: /alb-health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          livenessProbe:
+            httpGet:
+              path: /alb-health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          startupProbe:
+            httpGet:
+              path: /alb-health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 36
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: "2"
+              memory: 8Gi
+              ephemeral-storage: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: regulatory-backend
+  namespace: regulatory-dev
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: regulatory-backend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: regulatory-frontend
+  namespace: regulatory-dev
+  labels:
+    app.kubernetes.io/name: regulatory-frontend
+    app.kubernetes.io/part-of: lotor-regulatory-assistant
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: regulatory-frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: regulatory-frontend
+        app.kubernetes.io/part-of: lotor-regulatory-assistant
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: frontend
+          image: ${FRONTEND_IMAGE_URI}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: regulatory-frontend
+  namespace: regulatory-dev
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: regulatory-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+# Two Ingresses share one ALB (group.name). Backend TG uses /alb-health; frontend TG uses /.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: regulatory-backend
+  namespace: regulatory-dev
+  annotations:
+    alb.ingress.kubernetes.io/group.name: lotor-regulatory-dev
+    alb.ingress.kubernetes.io/group.order: "10"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: ${CERTIFICATE_ARN}
+    alb.ingress.kubernetes.io/security-groups: ${ALB_SECURITY_GROUP_ID}
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+    alb.ingress.kubernetes.io/subnets: ${PUBLIC_SUBNET_IDS}
+    alb.ingress.kubernetes.io/healthcheck-path: /alb-health
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=180,routing.http2.enabled=true
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
+    alb.ingress.kubernetes.io/tags: Project=lotor-regulatory-assistant,Environment=dev
+spec:
+  ingressClassName: alb
+  rules:
+    - host: ${ORIGIN_API_HOST}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /health
+            pathType: Exact
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /alb-health
+            pathType: Exact
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+          - path: /redoc
+            pathType: Prefix
+            backend:
+              service:
+                name: regulatory-backend
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: regulatory-frontend
+  namespace: regulatory-dev
+  annotations:
+    alb.ingress.kubernetes.io/group.name: lotor-regulatory-dev
+    alb.ingress.kubernetes.io/group.order: "20"
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/certificate-arn: ${CERTIFICATE_ARN}
+    alb.ingress.kubernetes.io/security-groups: ${ALB_SECURITY_GROUP_ID}
+    alb.ingress.kubernetes.io/manage-backend-security-group-rules: "true"
+    alb.ingress.kubernetes.io/subnets: ${PUBLIC_SUBNET_IDS}
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=180,routing.http2.enabled=true
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
+    alb.ingress.kubernetes.io/tags: Project=lotor-regulatory-assistant,Environment=dev
+spec:
+  ingressClassName: alb
+  rules:
+    - host: ${ORIGIN_API_HOST}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: regulatory-frontend
+                port:
+                  name: http

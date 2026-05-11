@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CloudFront + WAF in front of the origin ALB (Next.js + FastAPI on EKS).
+  Same pattern as TIME_build edge-dev, but single ALB origin (no S3 static export).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: lotor-regulatory-assistant
+  Environment:
+    Type: String
+    Default: dev
+  DevDomainName:
+    Type: String
+    Default: regulatory-assistant.lotorlab.com
+  ApiDomainName:
+    Type: String
+    Default: api.regulatory-assistant.lotorlab.com
+  OriginApiDomainName:
+    Type: String
+    Default: origin-api.regulatory-assistant.lotorlab.com
+  CertificateArn:
+    Type: String
+  BasicAuthHeaderValue:
+    Type: String
+    NoEcho: true
+    Description: Full Basic Auth header value, e.g. "Basic base64(user:password)". Leave workflows passing empty only if you disable the gate in the function manually.
+  OriginVerifyHeaderValue:
+    Type: String
+    NoEcho: true
+    Description: Shared secret CloudFront adds when calling the ALB origin (must match Kubernetes secret).
+
+Resources:
+  AppCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub ${ProjectName}-${Environment}-app-no-cache
+        DefaultTTL: 0
+        MaxTTL: 0
+        MinTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: false
+          EnableAcceptEncodingGzip: false
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  AppOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub ${ProjectName}-${Environment}-app-origin-request
+        CookiesConfig:
+          CookieBehavior: all
+        HeadersConfig:
+          HeaderBehavior: allExcept
+          Headers:
+            - host
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  DevPasswordGateFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-password-gate
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Basic Auth + redirect api host HTML traffic to primary app host (no S3 .html rewrite).
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var request = event.request;
+          var headers = request.headers;
+          var expected = "${BasicAuthHeaderValue}";
+          var uri = request.uri || "/";
+          function isBackendPath(u) {
+            if (u === "/health" || u === "/alb-health") return true;
+            if (u.indexOf("/api/") === 0 || u === "/api") return true;
+            if (u.indexOf("/ws/") === 0 || u === "/ws") return true;
+            if (u.indexOf("/docs") === 0) return true;
+            if (u.indexOf("/openapi.json") === 0) return true;
+            if (u.indexOf("/redoc") === 0) return true;
+            return false;
+          }
+          var isApi = isBackendPath(uri);
+          var host = headers.host ? headers.host.value : "";
+
+          if (host === "${ApiDomainName}" && !isApi) {
+            return {
+              statusCode: 302,
+              statusDescription: "Found",
+              headers: {
+                "location": { value: "https://${DevDomainName}" + uri },
+                "cache-control": { value: "no-store" }
+              }
+            };
+          }
+
+          if (expected && (!headers.authorization || headers.authorization.value !== expected)) {
+            return {
+              statusCode: 401,
+              statusDescription: "Unauthorized",
+              headers: {
+                "www-authenticate": { value: "Basic realm=\"Lotor Regulatory Assistant\"" },
+                "cache-control": { value: "no-store" }
+              }
+            };
+          }
+
+          delete request.headers.authorization;
+          return request;
+        }
+
+  WebAcl:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-edge
+      Scope: CLOUDFRONT
+      DefaultAction:
+        Allow: {}
+      VisibilityConfig:
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub ${ProjectName}-${Environment}-edge
+        SampledRequestsEnabled: true
+      Rules:
+        - Name: aws-common-rules
+          Priority: 0
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: aws-common-rules
+            SampledRequestsEnabled: true
+        - Name: rate-limit
+          Priority: 1
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              AggregateKeyType: IP
+              Limit: 2000
+          VisibilityConfig:
+            CloudWatchMetricsEnabled: true
+            MetricName: rate-limit
+            SampledRequestsEnabled: true
+
+  AppDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub ${ProjectName}-${Environment} Next.js + FastAPI via ALB.
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Aliases:
+          - !Ref DevDomainName
+          - !Ref ApiDomainName
+        WebACLId: !GetAtt WebAcl.Arn
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+        Origins:
+          - Id: eks-alb
+            DomainName: !Ref OriginApiDomainName
+            OriginCustomHeaders:
+              - HeaderName: X-Origin-Verify
+                HeaderValue: !Ref OriginVerifyHeaderValue
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginReadTimeout: 180
+              OriginKeepaliveTimeout: 60
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: eks-alb
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: !Ref AppCachePolicy
+          OriginRequestPolicyId: !Ref AppOriginRequestPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt DevPasswordGateFunction.FunctionARN
+        CacheBehaviors:
+          - PathPattern: /ws/*
+            TargetOriginId: eks-alb
+            ViewerProtocolPolicy: redirect-to-https
+            Compress: false
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - POST
+              - PATCH
+              - DELETE
+            CachedMethods:
+              - GET
+              - HEAD
+            CachePolicyId: !Ref AppCachePolicy
+            OriginRequestPolicyId: !Ref AppOriginRequestPolicy
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt DevPasswordGateFunction.FunctionARN
+
+Outputs:
+  DistributionId:
+    Value: !Ref AppDistribution
+  DistributionDomainName:
+    Value: !GetAtt AppDistribution.DomainName
+  ManualDnsRecords:
+    Description: External DNS CNAMEs after ALB hostname is known.
+    Value: !Sub
+      - '{"CloudFrontViewerCNAMEs":[{"host":"${Dev}","value":"${Cf}"},{"host":"${Api}","value":"${Cf}"}],"OriginApiCNAME":{"host":"${Origin}","value":"<kubectl get ingress regulatory-app -n regulatory-dev>"}}'
+      - Dev: !Ref DevDomainName
+        Api: !Ref ApiDomainName
+        Origin: !Ref OriginApiDomainName
+        Cf: !GetAtt AppDistribution.DomainName

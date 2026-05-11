@@ -1,0 +1,303 @@
+# Mirrors TIME_build EKS + ACM + ALB + CloudFront pattern for Regulatory Assistant.
+# See infra/aws/README.md for DNS, OIDC bootstrap, and GitHub secrets.
+
+name: Deploy AWS Dev (EKS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_edge:
+        description: Deploy/update CloudFront edge stack (after ACM issued + origin-api CNAME → ALB).
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      run_smoke_tests:
+        description: Run smoke tests against DEV_DOMAIN_NAME (after CloudFront + DNS).
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  AWS_REGION: us-east-2
+  APP_AWS_REGION: us-east-2
+  EDGE_AWS_REGION: us-east-1
+  PROJECT_NAME: lotor-regulatory-assistant
+  ENVIRONMENT: dev
+  EKS_KUBERNETES_VERSION: "1.34"
+  EKS_UPGRADE_SUPPORT_TYPE: STANDARD
+  DEV_DOMAIN_NAME: regulatory-assistant.lotorlab.com
+  API_DOMAIN_NAME: api.regulatory-assistant.lotorlab.com
+  ORIGIN_API_DOMAIN_NAME: origin-api.regulatory-assistant.lotorlab.com
+  EDGE_CERT_STACK: lotor-regulatory-assistant-certificates-edge-dev
+  REGIONAL_CERT_STACK: lotor-regulatory-assistant-certificates-regional-dev
+  PLATFORM_STACK: lotor-regulatory-assistant-platform-dev
+  EDGE_STACK: lotor-regulatory-assistant-edge-dev
+  AWS_ROLE_TO_ASSUME: ${{ vars.AWS_ROLE_TO_ASSUME || secrets.AWS_ROLE_TO_ASSUME }}
+  DEV_BASIC_AUTH_HEADER: ${{ secrets.DEV_BASIC_AUTH_HEADER }}
+  DEV_ORIGIN_VERIFY_HEADER: ${{ secrets.DEV_ORIGIN_VERIFY_HEADER }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.APP_AWS_REGION }}
+
+      - uses: azure/setup-helm@v4
+
+      - name: Deploy CloudFront certificate stack (us-east-1)
+        run: |
+          aws cloudformation deploy \
+            --region "$EDGE_AWS_REGION" \
+            --stack-name "$EDGE_CERT_STACK" \
+            --template-file infra/aws/cloudformation/certificates-dev.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              ProjectName="$PROJECT_NAME" \
+              Environment="$ENVIRONMENT" \
+              DevDomainName="$DEV_DOMAIN_NAME" \
+              ApiDomainName="$API_DOMAIN_NAME" \
+              OriginApiDomainName="$ORIGIN_API_DOMAIN_NAME"
+
+      - name: Deploy regional ALB certificate stack
+        run: |
+          aws cloudformation deploy \
+            --region "$APP_AWS_REGION" \
+            --stack-name "$REGIONAL_CERT_STACK" \
+            --template-file infra/aws/cloudformation/certificates-dev.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              ProjectName="$PROJECT_NAME" \
+              Environment="$ENVIRONMENT" \
+              DevDomainName="$DEV_DOMAIN_NAME" \
+              ApiDomainName="$API_DOMAIN_NAME" \
+              OriginApiDomainName="$ORIGIN_API_DOMAIN_NAME"
+
+      - name: Deploy platform stack (EKS / ECR / VPC)
+        run: |
+          aws cloudformation deploy \
+            --region "$APP_AWS_REGION" \
+            --stack-name "$PLATFORM_STACK" \
+            --template-file infra/aws/cloudformation/platform-dev.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides \
+              ProjectName="$PROJECT_NAME" \
+              Environment="$ENVIRONMENT" \
+              KubernetesVersion="$EKS_KUBERNETES_VERSION" \
+              UpgradeSupportType="$EKS_UPGRADE_SUPPORT_TYPE"
+
+      - name: Print ACM DNS validation CNAMEs
+        run: |
+          echo "=== Edge (us-east-1) validation records ==="
+          aws cloudformation describe-stacks --region "$EDGE_AWS_REGION" --stack-name "$EDGE_CERT_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='DomainValidationRecords'].OutputValue" --output text || true
+          echo "=== Regional (us-east-2) validation records ==="
+          aws cloudformation describe-stacks --region "$APP_AWS_REGION" --stack-name "$REGIONAL_CERT_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='DomainValidationRecords'].OutputValue" --output text || true
+
+      - name: Capture CloudFormation outputs
+        run: |
+          get_output() {
+            aws cloudformation describe-stacks \
+              --region "$3" \
+              --stack-name "$1" \
+              --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
+              --output text
+          }
+          {
+            echo "EDGE_CERTIFICATE_ARN=$(get_output "$EDGE_CERT_STACK" CertificateArn "$EDGE_AWS_REGION")"
+            echo "REGIONAL_CERTIFICATE_ARN=$(get_output "$REGIONAL_CERT_STACK" CertificateArn "$APP_AWS_REGION")"
+            echo "CLUSTER_NAME=$(get_output "$PLATFORM_STACK" ClusterName "$APP_AWS_REGION")"
+            echo "VPC_ID=$(get_output "$PLATFORM_STACK" VpcId "$APP_AWS_REGION")"
+            echo "PUBLIC_SUBNET_IDS=$(get_output "$PLATFORM_STACK" PublicSubnetIds "$APP_AWS_REGION")"
+            echo "BACKEND_REPOSITORY_URI=$(get_output "$PLATFORM_STACK" BackendRepositoryUri "$APP_AWS_REGION")"
+            echo "FRONTEND_REPOSITORY_URI=$(get_output "$PLATFORM_STACK" FrontendRepositoryUri "$APP_AWS_REGION")"
+            echo "LOAD_BALANCER_CONTROLLER_ROLE_ARN=$(get_output "$PLATFORM_STACK" LoadBalancerControllerRoleArn "$APP_AWS_REGION")"
+            echo "BACKEND_SERVICE_ROLE_ARN=$(get_output "$PLATFORM_STACK" BackendServiceRoleArn "$APP_AWS_REGION")"
+            echo "ALB_SECURITY_GROUP_ID=$(get_output "$PLATFORM_STACK" AlbSecurityGroupId "$APP_AWS_REGION")"
+          } >> "$GITHUB_ENV"
+          echo "Add ACM DNS validation CNAMEs from stack outputs (edge us-east-1 + regional us-east-2)."
+
+      - name: Check certificate issuance
+        id: certs
+        run: |
+          edge_status="$(aws acm describe-certificate --region "$EDGE_AWS_REGION" --certificate-arn "$EDGE_CERTIFICATE_ARN" --query "Certificate.Status" --output text)"
+          regional_status="$(aws acm describe-certificate --region "$APP_AWS_REGION" --certificate-arn "$REGIONAL_CERTIFICATE_ARN" --query "Certificate.Status" --output text)"
+          echo "Edge cert: $edge_status | Regional cert: $regional_status"
+          if [ "$edge_status" = "ISSUED" ] && [ "$regional_status" = "ISSUED" ]; then
+            echo "issued=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "issued=false" >> "$GITHUB_OUTPUT"
+            echo "Certificates not ISSUED yet — add DNS validation records and re-run."
+          fi
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        if: steps.certs.outputs.issued == 'true'
+
+      - name: Build and push backend image
+        if: steps.certs.outputs.issued == 'true'
+        run: |
+          BACKEND_IMAGE_URI="${BACKEND_REPOSITORY_URI}:${GITHUB_SHA}"
+          docker build -t "$BACKEND_IMAGE_URI" -f backend/Dockerfile backend
+          docker push "$BACKEND_IMAGE_URI"
+          echo "BACKEND_IMAGE_URI=$BACKEND_IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Build and push frontend image
+        if: steps.certs.outputs.issued == 'true'
+        run: |
+          FRONTEND_IMAGE_URI="${FRONTEND_REPOSITORY_URI}:${GITHUB_SHA}"
+          docker build \
+            --build-arg "NEXT_PUBLIC_API_URL=https://${DEV_DOMAIN_NAME}" \
+            --build-arg "NEXT_PUBLIC_AGENT_WS_URL=wss://${DEV_DOMAIN_NAME}/ws" \
+            -t "$FRONTEND_IMAGE_URI" \
+            -f frontend/Dockerfile \
+            frontend
+          docker push "$FRONTEND_IMAGE_URI"
+          echo "FRONTEND_IMAGE_URI=$FRONTEND_IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Configure kubectl
+        if: steps.certs.outputs.issued == 'true'
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$APP_AWS_REGION"
+
+      - name: Patch CoreDNS for Fargate
+        if: steps.certs.outputs.issued == 'true'
+        run: |
+          for i in $(seq 1 60); do
+            kubectl get deployment coredns -n kube-system >/dev/null 2>&1 && break
+            sleep 10
+          done
+          kubectl patch deployment coredns -n kube-system --type json \
+            -p='[{"op":"remove","path":"/spec/template/metadata/annotations/eks.amazonaws.com~1compute-type"}]' || true
+          kubectl rollout restart deployment/coredns -n kube-system
+          kubectl rollout status deployment/coredns -n kube-system --timeout=10m
+
+      - name: Install AWS Load Balancer Controller
+        if: steps.certs.outputs.issued == 'true'
+        env:
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+          AWS_REGION: ${{ env.APP_AWS_REGION }}
+          VPC_ID: ${{ env.VPC_ID }}
+          LOAD_BALANCER_CONTROLLER_ROLE_ARN: ${{ env.LOAD_BALANCER_CONTROLLER_ROLE_ARN }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          values = Path("infra/helm/aws-load-balancer-controller-values.yaml").read_text()
+          for key, value in os.environ.items():
+              values = values.replace("${" + key + "}", value)
+          Path("/tmp/aws-load-balancer-controller-values.yaml").write_text(values)
+          PY
+          helm repo add eks https://aws.github.io/eks-charts
+          helm repo update
+          kubectl delete mutatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
+          kubectl delete validatingwebhookconfiguration aws-load-balancer-webhook --ignore-not-found
+          helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+            --namespace kube-system \
+            --values /tmp/aws-load-balancer-controller-values.yaml \
+            --set keepTLSSecret=true \
+            --wait --timeout 15m
+
+      - name: Apply Kubernetes workloads
+        if: steps.certs.outputs.issued == 'true'
+        env:
+          REGULATORY_CORS_ORIGINS: https://${{ env.DEV_DOMAIN_NAME }},https://${{ env.API_DOMAIN_NAME }}
+          LLM_PROVIDER: ${{ secrets.REGULATORY_LLM_PROVIDER }}
+          ANTHROPIC_API_KEY: ${{ secrets.REGULATORY_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.REGULATORY_OPENAI_API_KEY }}
+        run: |
+          test -n "$DEV_ORIGIN_VERIFY_HEADER"
+          kubectl create namespace regulatory-dev --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic regulatory-origin-verify \
+            --namespace regulatory-dev \
+            --from-literal=value="$DEV_ORIGIN_VERIFY_HEADER" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n regulatory-dev delete secret regulatory-backend-env --ignore-not-found
+          kubectl create secret generic regulatory-backend-env -n regulatory-dev \
+            --from-literal=LLM_PROVIDER="${LLM_PROVIDER:-anthropic}" \
+            --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
+            --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          manifest = Path("infra/aws/k8s/dev/regulatory-app.yaml").read_text()
+          rep = {
+              "AWS_REGION": os.environ["APP_AWS_REGION"],
+              "BACKEND_IMAGE_URI": os.environ["BACKEND_IMAGE_URI"],
+              "FRONTEND_IMAGE_URI": os.environ["FRONTEND_IMAGE_URI"],
+              "BACKEND_SERVICE_ROLE_ARN": os.environ["BACKEND_SERVICE_ROLE_ARN"],
+              "CERTIFICATE_ARN": os.environ["REGIONAL_CERTIFICATE_ARN"],
+              "ALB_SECURITY_GROUP_ID": os.environ["ALB_SECURITY_GROUP_ID"],
+              "PUBLIC_SUBNET_IDS": os.environ["PUBLIC_SUBNET_IDS"],
+              "ORIGIN_API_HOST": os.environ["ORIGIN_API_DOMAIN_NAME"],
+              "REGULATORY_CORS_ORIGINS": os.environ["REGULATORY_CORS_ORIGINS"],
+          }
+          for k, v in rep.items():
+              manifest = manifest.replace("${" + k + "}", v)
+          Path("/tmp/regulatory-app.yaml").write_text(manifest)
+          PY
+          kubectl apply -f /tmp/regulatory-app.yaml
+          kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=15m
+          kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=15m
+
+      - name: Print ALB hostname (origin-api DNS)
+        if: steps.certs.outputs.issued == 'true'
+        run: |
+          for i in $(seq 1 90); do
+            H="$(kubectl get ingress regulatory-backend -n regulatory-dev -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+            if [ -n "$H" ]; then
+              echo "Create DNS: $ORIGIN_API_DOMAIN_NAME CNAME $H"
+              exit 0
+            fi
+            sleep 10
+          done
+          kubectl get ingress -n regulatory-dev -o wide
+          exit 1
+
+      - name: Deploy CloudFront edge
+        if: steps.certs.outputs.issued == 'true' && inputs.deploy_edge == 'true'
+        run: |
+          test -n "$DEV_BASIC_AUTH_HEADER"
+          aws cloudformation deploy \
+            --region "$EDGE_AWS_REGION" \
+            --stack-name "$EDGE_STACK" \
+            --template-file infra/aws/cloudformation/edge-regulatory-dev.yml \
+            --parameter-overrides \
+              ProjectName="$PROJECT_NAME" \
+              Environment="$ENVIRONMENT" \
+              DevDomainName="$DEV_DOMAIN_NAME" \
+              ApiDomainName="$API_DOMAIN_NAME" \
+              OriginApiDomainName="$ORIGIN_API_DOMAIN_NAME" \
+              CertificateArn="$EDGE_CERTIFICATE_ARN" \
+              BasicAuthHeaderValue="$DEV_BASIC_AUTH_HEADER" \
+              OriginVerifyHeaderValue="$DEV_ORIGIN_VERIFY_HEADER"
+
+      - name: Invalidate CloudFront
+        if: steps.certs.outputs.issued == 'true' && inputs.deploy_edge == 'true'
+        run: |
+          DIST="$(aws cloudformation describe-stacks --region "$EDGE_AWS_REGION" --stack-name "$EDGE_STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" --output text)"
+          aws cloudfront create-invalidation --region "$EDGE_AWS_REGION" --distribution-id "$DIST" --paths "/*"
+
+      - name: Smoke tests
+        if: steps.certs.outputs.issued == 'true' && inputs.run_smoke_tests == 'true'
+        run: |
+          curl -fsS -H "Authorization: $DEV_BASIC_AUTH_HEADER" "https://$DEV_DOMAIN_NAME/alb-health"
+          curl -fsS -H "Authorization: $DEV_BASIC_AUTH_HEADER" "https://$DEV_DOMAIN_NAME/health" | head -c 400

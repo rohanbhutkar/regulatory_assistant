@@ -8,6 +8,8 @@ Complete FastAPI application with:
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 import uvicorn
 from contextlib import asynccontextmanager
 import os
@@ -131,15 +133,40 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS - Enhanced to handle all origins and preflight requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _cors_allow_origins() -> list:
+    base = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "http://127.0.0.1:3001"
-    ],
+        "http://127.0.0.1:3001",
+    ]
+    extra = (os.getenv("REGULATORY_CORS_ORIGINS") or "").strip()
+    if extra:
+        base.extend([x.strip() for x in extra.split(",") if x.strip()])
+    return base
+
+
+@app.middleware("http")
+async def regulatory_origin_verify_middleware(request: Request, call_next):
+    """Require X-Origin-Verify when set (CloudFront → ALB pattern). Health paths exempt."""
+    secret = (os.getenv("REGULATORY_ORIGIN_VERIFY_HEADER_VALUE") or "").strip()
+    if not secret:
+        return await call_next(request)
+    path = request.url.path or ""
+    if path in ("/health", "/alb-health"):
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    header_name = (os.getenv("REGULATORY_ORIGIN_VERIFY_HEADER_NAME") or "X-Origin-Verify").strip()
+    if request.headers.get(header_name) != secret:
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    return await call_next(request)
+
+
+# CORS - Enhanced to handle all origins and preflight requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -195,6 +222,13 @@ async def health_check():
         "active_agents": len([v for v in agent_status.values() if v]),
         "agents": agent_status
     }
+
+
+@app.get("/alb-health")
+async def alb_health():
+    """Minimal OK for AWS ALB / Kubernetes probes (matches TIME_build-style paths)."""
+    return {"status": "ok"}
+
 
 # Agent capabilities endpoint
 @app.get("/api/agents")

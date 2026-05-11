@@ -4,7 +4,7 @@
 #
 # Prereq: Docker Compose (or similar) exposes backend on 127.0.0.1:8001 and frontend on 127.0.0.1:3000.
 
-regulatory_assistant.lotorlab.com {
+regulatory-assistant.lotorlab.com {
 	encode gzip zstd
 
 	# Multi-agent WebSocket (FastAPI)
