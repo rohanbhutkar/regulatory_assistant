@@ -1,0 +1,88 @@
+# Environment and Config
+.env
+.env.local
+.env.*.local
+frontend/.env.local
+
+# Cursor / local tooling (not for deploy or VCS)
+.cursor/
+
+# Rsync / sync artifacts
+.rsync-data.log
+.rsync-*.log
+
+# Data folders (exclude root and backend data, but allow frontend lib data)
+/data/
+backend/data/
+# Symlink backend/data -> ../data (local dev only; do not track)
+backend/data
+backend/.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+backend/lib/
+backend/lib64/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+backend/venv/
+
+# Logs
+*.log
+logs/
+backend/logs/
+backend/server.log
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+
+# TypeScript
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# Misc
+*.pid
+

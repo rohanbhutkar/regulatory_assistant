@@ -1,0 +1,27 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+!.env.local.example
+
+# Build outputs & deps (deps stage installs fresh)
+node_modules/
+.next/
+out/
+dist/
+
+# VCS / IDE
+.git
+.DS_Store
+.vscode/
+.idea/
+
+# Logs & coverage
+*.log
+coverage/
+.eslintcache
+*.tsbuildinfo
+
+# Dev docs
+*.md
+README.md

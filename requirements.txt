@@ -1,0 +1,9 @@
+# Python dependencies for this repository (backend API and agents).
+#
+# Install from the repository root:
+#   python -m venv .venv && source .venv/bin/activate  # or venv\Scripts\activate on Windows
+#   pip install -r requirements.txt
+#
+# The Next.js frontend is managed with npm; see frontend/package.json and run:
+#   cd frontend && npm install
+-r backend/requirements.txt

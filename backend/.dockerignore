@@ -1,0 +1,38 @@
+# Secrets — never copy into images (use env_file / runtime secrets)
+.env
+.env.*
+!.env.example
+
+# Python / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Logs & local data
+*.log
+logs/
+data/
+.cache/
+
+# Tests (not used at runtime)
+test_*.py
+conftest.py
+
+# Experiments / one-off scripts
+deepagents_spike.py
+scripts/
+
+# VCS / IDE
+.git
+.DS_Store
+.vscode/
+.idea/
+
+# Internal / dev docs in tree
+*.md

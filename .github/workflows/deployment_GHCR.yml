@@ -1,0 +1,65 @@
+name: Deploy to GHCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      next_public_api_url:
+        description: Baked NEXT_PUBLIC_API_URL (public origin, e.g. https://regulatory_assistant.lotorlab.com)
+        required: false
+        default: "https://regulatory_assistant.lotorlab.com"
+      next_public_agent_ws_url:
+        description: Baked NEXT_PUBLIC_AGENT_WS_URL (e.g. wss://regulatory_assistant.lotorlab.com/ws)
+        required: false
+        default: "wss://regulatory_assistant.lotorlab.com/ws"
+
+permissions:
+  id-token: write # This is required for requesting the JWT
+  contents: read # This is required for reading the repository contents
+  packages: write # This is required for pushing to GHCR
+
+jobs:
+  deploy:
+    name: Deploy Code to GHCR # This job deploys code to GHCR.
+    runs-on: ubuntu-latest # Specifies the runner environment.
+    steps:
+      # Clean up Docker before building images
+      - name: Docker Clean up - Pre Build
+        run: |
+          docker system prune -af
+
+      # Checks out your repository under $GITHUB_WORKSPACE, so your workflow can access it.
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Log in to GHCR
+      - name: Log in to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build and push the backend service Docker image
+      - name: Build and Push Backend Service
+        env:
+          IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+        run: |
+          PREFIX=$(echo "$IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')
+          docker build -t "${PREFIX}/backend:latest" -f backend/Dockerfile backend
+          docker push "${PREFIX}/backend:latest"
+
+      # Build and push the frontend service Docker image
+      - name: Build and Push Frontend Service
+        env:
+          IMAGE_PREFIX: ghcr.io/${{ github.repository }}
+          NEXT_PUBLIC_API_URL: ${{ inputs.next_public_api_url }}
+          NEXT_PUBLIC_AGENT_WS_URL: ${{ inputs.next_public_agent_ws_url }}
+        run: |
+          PREFIX=$(echo "$IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')
+          docker build \
+            --build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}" \
+            --build-arg "NEXT_PUBLIC_AGENT_WS_URL=${NEXT_PUBLIC_AGENT_WS_URL}" \
+            -t "${PREFIX}/frontend:latest" \
+            -f frontend/Dockerfile \
+            frontend
+          docker push "${PREFIX}/frontend:latest"

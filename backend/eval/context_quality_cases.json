@@ -1,0 +1,28 @@
+[
+  {
+    "id": "nct_required",
+    "query": "What phase is NCT01234567?",
+    "context_items": [
+      {
+        "layer_type": "search",
+        "content": {"nct_id": "NCT01234567", "title": "Oncology study", "phase": "Phase 2"}
+      }
+    ],
+    "expect_substrings": ["NCT01234567", "Phase 2"]
+  },
+  {
+    "id": "bm25_rank_lung",
+    "query": "lung cancer immunotherapy trials",
+    "context_items": [
+      {
+        "layer_type": "search",
+        "content": {"nct_id": "NCT111", "title": "Diabetes foot care", "condition": "diabetes"}
+      },
+      {
+        "layer_type": "search",
+        "content": {"nct_id": "NCT222", "title": "NSCLC pembrolizumab phase 3", "condition": "lung cancer"}
+      }
+    ],
+    "expect_first_nct_after_bm25_pool": "NCT222"
+  }
+]

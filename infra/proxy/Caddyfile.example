@@ -1,0 +1,45 @@
+# Example: single public hostname for Next.js + FastAPI + WebSockets.
+# Copy to your server, adjust domain and upstream ports, then:
+#   caddy run --config /path/to/Caddyfile
+#
+# Prereq: Docker Compose (or similar) exposes backend on 127.0.0.1:8001 and frontend on 127.0.0.1:3000.
+
+regulatory_assistant.lotorlab.com {
+	encode gzip zstd
+
+	# Multi-agent WebSocket (FastAPI)
+	@ws {
+		path /ws/*
+	}
+	handle @ws {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# REST API
+	@api {
+		path /api/*
+	}
+	handle @api {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# OpenAPI docs if enabled on backend root paths
+	@docs {
+		path /docs* /redoc* /openapi.json
+	}
+	handle @docs {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	# Health for ALB / uptime checks (no Next hop)
+	@health {
+		path /health
+	}
+	handle @health {
+		reverse_proxy 127.0.0.1:8001
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000
+	}
+}

@@ -1,0 +1,92 @@
+# Git
+.git
+.gitignore
+
+# Environment and Config
+.env
+.env.local
+.env.*.local
+frontend/.env.local
+
+# Cursor / IDE
+.cursor/
+
+# Sync / local artifacts
+.rsync-data.log
+.rsync-*.log
+
+# Data
+data/
+backend/data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+ENV/
+env/
+backend/venv/
+
+# Logs
+*.log
+logs/
+backend/logs/
+backend/server.log
+*.pid
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+
+# TypeScript
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.hypothesis/
+
+# Internal docs (optional; keep README if you build from repo root)
+docs/
+
+# Docker metadata at repo root (not needed inside child build contexts)
+docker-compose*.yml
+

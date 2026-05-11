@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  One-time GitHub OIDC bootstrap for Actions to assume a deploy role (pattern from TIME_build;
+  parameterized for Lotor / regulatory assistant stacks).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: lotor-regulatory-assistant
+    Description: Short prefix for IAM resource names (alphanumeric and hyphens).
+  GitHubOrg:
+    Type: String
+    Description: GitHub organization or user that owns the repository.
+  GitHubRepo:
+    Type: String
+    Description: Repository name without owner.
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch allowed to deploy (ref condition).
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: Optional existing token.actions.githubusercontent.com IAM OIDC provider ARN.
+
+Conditions:
+  CreateGitHubOidcProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, ""]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateGitHubOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-github-deploy-${GitHubRepo}
+      Description: !Sub GitHub Actions deploy role for ${ProjectName} (${GitHubRepo}).
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:ref:refs/heads/${GitHubBranch}
+                  - !Sub repo:${GitHubOrg}/${GitHubRepo}:environment:*
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-github-deploy-inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - acm:*
+                  - cloudformation:*
+                  - cloudfront:*
+                  - ec2:*
+                  - ecr:*
+                  - eks:*
+                  - elasticloadbalancing:*
+                  - iam:*
+                  - kms:*
+                  - lambda:*
+                  - logs:*
+                  - s3:*
+                  - secretsmanager:*
+                  - sts:GetCallerIdentity
+                  - wafv2:*
+                Resource: "*"
+
+Outputs:
+  GitHubDeployRoleArn:
+    Description: Role ARN — set as GitHub repository variable AWS_ROLE_TO_ASSUME for OIDC workflows.
+    Value: !GetAtt GitHubDeployRole.Arn
+  GitHubOidcProviderArn:
+    Description: GitHub OIDC provider ARN used by the deploy role.
+    Value: !If
+      - CreateGitHubOidcProvider
+      - !Ref GitHubOidcProvider
+      - !Ref ExistingGitHubOidcProviderArn
