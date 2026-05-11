@@ -7,8 +7,8 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from pathlib import Path
 from config import settings
+from utils.regulatory_data_io import read_regulatory_csv
 from utils.logger import log_error
 from models.schemas import ClaimsResult, PatientResult, PrescriptionResult, ProviderResult
 import logging
@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 
 class ClaimsDataAgent:
     def __init__(self):
-        # Use absolute path to data directory
-        backend_dir = Path(__file__).parent.parent
-        self.data_path = backend_dir.parent / "data" / "claims"
         self.cache = {}
         self.geocoder = None  # Initialize geocoder for lazy loading
         self._load_data()
@@ -34,7 +31,7 @@ class ClaimsDataAgent:
         """Load claims data into memory for fast access"""
         try:
             # Load main claims data
-            self.claims_df = pd.read_csv(self.data_path / "combined_claims.csv", low_memory=False)
+            self.claims_df = read_regulatory_csv("claims/combined_claims.csv", low_memory=False)
             
             logger.info(f"Loaded {len(self.claims_df)} claims from combined_claims.csv")
             

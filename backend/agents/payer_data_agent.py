@@ -7,8 +7,8 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from pathlib import Path
 from config import settings
+from utils.regulatory_data_io import read_regulatory_csv
 from utils.logger import log_error
 from models.schemas import PayerResult, SalesResult, ProductResult
 import logging
@@ -17,47 +17,48 @@ logger = logging.getLogger(__name__)
 
 class PayerDataAgent:
     def __init__(self):
-        # Resolve like claims_data_agent: repo-root data/payer_data (not cwd-relative payer_data/).
-        backend_dir = Path(__file__).resolve().parent.parent
-        self.data_path = backend_dir.parent / "data" / "payer_data"
         self.cache = {}
         self._load_data()
+
+    @staticmethod
+    def _payer_csv(name: str) -> pd.DataFrame:
+        return read_regulatory_csv(f"payer_data/{name}", low_memory=False)
     
     def _load_data(self):
         """Load payer data into memory for fast access"""
         try:
             # Load core datasets
-            self.product_brand_df = pd.read_csv(self.data_path / "Productbrand_Dim.csv")
-            self.product_group_df = pd.read_csv(self.data_path / "Productgroup_Dim.csv")
-            self.product_ndc_df = pd.read_csv(self.data_path / "Productndc_Dim.csv")
-            self.therapeutic_area_df = pd.read_csv(self.data_path / "Therapeuticarea_Dim.csv")
-            self.therapeutic_class_df = pd.read_csv(self.data_path / "Therapeuticclass_Dim.csv")
-            self.customer_df = pd.read_csv(self.data_path / "Customer_Dim.csv")
-            self.payer_plan_df = pd.read_csv(self.data_path / "Payer_Plan_Dim.csv")
-            self.formulary_tier_df = pd.read_csv(self.data_path / "Formulary_Tier_Dim.csv")
+            self.product_brand_df = self._payer_csv( "Productbrand_Dim.csv")
+            self.product_group_df = self._payer_csv( "Productgroup_Dim.csv")
+            self.product_ndc_df = self._payer_csv( "Productndc_Dim.csv")
+            self.therapeutic_area_df = self._payer_csv( "Therapeuticarea_Dim.csv")
+            self.therapeutic_class_df = self._payer_csv( "Therapeuticclass_Dim.csv")
+            self.customer_df = self._payer_csv( "Customer_Dim.csv")
+            self.payer_plan_df = self._payer_csv( "Payer_Plan_Dim.csv")
+            self.formulary_tier_df = self._payer_csv( "Formulary_Tier_Dim.csv")
             
             # Load additional datasets
             try:
-                self.sales_forecast_df = pd.read_csv(self.data_path / "Sales_Forecast_Fact.csv")
+                self.sales_forecast_df = self._payer_csv( "Sales_Forecast_Fact.csv")
             except:
                 self.sales_forecast_df = None
                 logger.warning("Sales forecast data not available")
             
             try:
-                self.payer_plans_claims_df = pd.read_csv(self.data_path / "Payer_Plans_Claims_Fact.csv")
+                self.payer_plans_claims_df = self._payer_csv( "Payer_Plans_Claims_Fact.csv")
             except:
                 self.payer_plans_claims_df = None
                 logger.warning("Payer plans claims data not available")
             
             try:
-                self.product_group_df = pd.read_csv(self.data_path / "Productgroup_Dim.csv")
+                self.product_group_df = self._payer_csv( "Productgroup_Dim.csv")
             except:
                 self.product_group_df = None
                 logger.warning("Product group data not available")
             
             # Load sales data if available (use the correct sales file with real data)
             try:
-                self.sales_df = pd.read_csv(self.data_path / "Sales_Fact.csv")
+                self.sales_df = self._payer_csv( "Sales_Fact.csv")
                 logger.info(f"Loaded Sales_Fact data: {len(self.sales_df)} records")
             except Exception as e:
                 self.sales_df = None
@@ -65,14 +66,14 @@ class PayerDataAgent:
             
             # Load relationship data
             try:
-                self.product_brand_group_rel_df = pd.read_csv(self.data_path / "Productbrand_Productgroup_Relationship_Dim.csv")
+                self.product_brand_group_rel_df = self._payer_csv( "Productbrand_Productgroup_Relationship_Dim.csv")
                 logger.info(f"Loaded product brand-group relationship data: {len(self.product_brand_group_rel_df)} records")
             except Exception as e:
                 self.product_brand_group_rel_df = None
                 logger.warning(f"Product brand-group relationship data not available: {e}")
             
             try:
-                self.product_brand_therapeutic_rel_df = pd.read_csv(self.data_path / "Productbrand_Therapeuticarea_Relationship_Dim.csv")
+                self.product_brand_therapeutic_rel_df = self._payer_csv( "Productbrand_Therapeuticarea_Relationship_Dim.csv")
                 logger.info(f"Loaded product brand-therapeutic area relationship data: {len(self.product_brand_therapeutic_rel_df)} records")
             except Exception as e:
                 self.product_brand_therapeutic_rel_df = None
@@ -80,7 +81,7 @@ class PayerDataAgent:
             
             # Load enhanced relationship data (NDC relationships - more complete)
             try:
-                self.product_brand_ndc_rel_df = pd.read_csv(self.data_path / "Productbrand_Productndc_Relationship_Dim.csv")
+                self.product_brand_ndc_rel_df = self._payer_csv( "Productbrand_Productndc_Relationship_Dim.csv")
                 logger.info(f"Loaded product brand-NDC relationship data: {len(self.product_brand_ndc_rel_df)} records")
             except Exception as e:
                 self.product_brand_ndc_rel_df = None
@@ -88,14 +89,14 @@ class PayerDataAgent:
             
             # Load additional data sources for enhanced analysis
             try:
-                self.market_basket_df = pd.read_csv(self.data_path / "Market_Basket_Dim.csv")
+                self.market_basket_df = self._payer_csv( "Market_Basket_Dim.csv")
                 logger.info(f"Loaded market basket data: {len(self.market_basket_df)} records")
             except Exception as e:
                 self.market_basket_df = None
                 logger.warning(f"Market basket data not available: {e}")
             
             try:
-                self.formulary_tier_df = pd.read_csv(self.data_path / "Formulary_Tier_Dim.csv")
+                self.formulary_tier_df = self._payer_csv( "Formulary_Tier_Dim.csv")
                 logger.info(f"Loaded formulary tier data: {len(self.formulary_tier_df)} records")
             except Exception as e:
                 self.formulary_tier_df = None
@@ -106,9 +107,9 @@ class PayerDataAgent:
             
             # Load relationship tables
             try:
-                self.product_brand_ndc_df = pd.read_csv(self.data_path / "Productbrand_Productndc_Relationship_Dim.csv")
-                self.product_brand_therapeutic_df = pd.read_csv(self.data_path / "Productbrand_Therapeuticarea_Relationship_Dim.csv")
-                self.product_brand_class_df = pd.read_csv(self.data_path / "Product_Brand_Therapeutic_Class_Relation_Dim.csv")
+                self.product_brand_ndc_df = self._payer_csv( "Productbrand_Productndc_Relationship_Dim.csv")
+                self.product_brand_therapeutic_df = self._payer_csv( "Productbrand_Therapeuticarea_Relationship_Dim.csv")
+                self.product_brand_class_df = self._payer_csv( "Product_Brand_Therapeutic_Class_Relation_Dim.csv")
             except:
                 logger.warning("Some relationship tables not available")
             
@@ -147,7 +148,7 @@ class PayerDataAgent:
             # Method 1: Use NDC relationships (more complete data)
             if self.product_brand_ndc_rel_df is not None and self.product_ndc_df is not None:
                 # Get diabetes products from therapeutic area relationships
-                diabetes_brand_rel_df = pd.read_csv(self.data_path / "Productbrand_Therapeuticarea_Relationship_Dim.csv")
+                diabetes_brand_rel_df = self._payer_csv( "Productbrand_Therapeuticarea_Relationship_Dim.csv")
                 diabetes_brands = diabetes_brand_rel_df[diabetes_brand_rel_df['TherapeuticareaID'] == 2]
                 diabetes_brand_ids = diabetes_brands['ProductbrandID'].tolist()
                 
@@ -347,7 +348,7 @@ class PayerDataAgent:
             
             # Method 1: Use customer data for diabetes market analysis
             try:
-                customer_df = pd.read_csv(self.data_path / "Customer_Dim.csv")
+                customer_df = self._payer_csv( "Customer_Dim.csv")
                 diabetes_customers = customer_df[
                     customer_df['SourceID'].str.contains('|'.join(search_terms), case=False, na=False)
                 ]
@@ -374,7 +375,7 @@ class PayerDataAgent:
             # Method 2: Use HCP data for diabetes market analysis
             if len(results) < max_results:
                 try:
-                    hcp_df = pd.read_csv(self.data_path / "HCP_Dim.csv")
+                    hcp_df = self._payer_csv( "HCP_Dim.csv")
                     diabetes_hcps = hcp_df[
                         hcp_df['organization_name'].str.contains('|'.join(search_terms), case=False, na=False)
                     ]

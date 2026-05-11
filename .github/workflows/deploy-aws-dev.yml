@@ -131,8 +131,19 @@ jobs:
             echo "LOAD_BALANCER_CONTROLLER_ROLE_ARN=$(get_output "$PLATFORM_STACK" LoadBalancerControllerRoleArn "$APP_AWS_REGION")"
             echo "BACKEND_SERVICE_ROLE_ARN=$(get_output "$PLATFORM_STACK" BackendServiceRoleArn "$APP_AWS_REGION")"
             echo "ALB_SECURITY_GROUP_ID=$(get_output "$PLATFORM_STACK" AlbSecurityGroupId "$APP_AWS_REGION")"
+            echo "RUNTIME_DATA_BUCKET=$(get_output "$PLATFORM_STACK" RuntimeDataBucketName "$APP_AWS_REGION")"
           } >> "$GITHUB_ENV"
           echo "Add ACM DNS validation CNAMEs from stack outputs (edge us-east-1 + regional us-east-2)."
+
+      - name: Sync regulatory app data to S3
+        run: |
+          test -n "$RUNTIME_DATA_BUCKET"
+          if [ -d data ]; then
+            echo "Syncing repo data/ to s3://${RUNTIME_DATA_BUCKET}/regulatory-app-data/"
+            aws s3 sync "data/" "s3://${RUNTIME_DATA_BUCKET}/regulatory-app-data/" --exclude ".DS_Store"
+          else
+            echo "::warning::No data/ directory at repo root — skipping S3 sync (ensure large CSVs and FDA_Structured_Labels.xlsx are present locally before deploy)."
+          fi
 
       - name: Check certificate issuance
         id: certs
@@ -260,6 +271,7 @@ jobs:
               "PUBLIC_SUBNET_IDS": os.environ["PUBLIC_SUBNET_IDS"],
               "ORIGIN_API_HOST": os.environ["ORIGIN_API_DOMAIN_NAME"],
               "REGULATORY_CORS_ORIGINS": os.environ["REGULATORY_CORS_ORIGINS"],
+              "RUNTIME_DATA_BUCKET": os.environ.get("RUNTIME_DATA_BUCKET", ""),
           }
           for k, v in rep.items():
               manifest = manifest.replace("${" + k + "}", v)

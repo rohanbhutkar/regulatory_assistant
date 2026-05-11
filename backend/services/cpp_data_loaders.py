@@ -7,7 +7,6 @@ import pandas as pd
 import os
 from typing import List, Dict, Optional
 from decimal import Decimal
-from pathlib import Path
 import logging
 
 from models.cpp_models import (
@@ -15,11 +14,9 @@ from models.cpp_models import (
     SPUProcedure, SPUPrice,
     Rule, RuleType, RuleAction
 )
+from utils.regulatory_data_io import read_regulatory_csv, regulatory_file_exists
 
 logger = logging.getLogger(__name__)
-
-# Base path for CPP data
-CPP_DATA_PATH = Path(__file__).parent.parent / "data" / "cpp"
 
 
 class CPPDataLoader:
@@ -46,16 +43,15 @@ class CPPDataLoader:
     
     def load_clinical_procedures(self):
         """Load clinical procedures from Reference_Clinical_Procedures_2025_Q2.csv"""
-        file_path = CPP_DATA_PATH / "clinical_procedures" / "Reference_Clinical_Procedures_2025_Q2.csv"
-        
-        if not file_path.exists():
-            logger.warning(f"Clinical procedures file not found: {file_path}")
+        rel = "cpp/clinical_procedures/Reference_Clinical_Procedures_2025_Q2.csv"
+        if not regulatory_file_exists(rel):
+            logger.warning(f"Clinical procedures file not found: {rel}")
             return
-        
-        logger.info(f"Loading clinical procedures from {file_path}...")
-        
+
+        logger.info("Loading clinical procedures from %s...", rel)
+
         try:
-            df = pd.read_csv(file_path)
+            df = read_regulatory_csv(rel)
             
             for _, row in df.iterrows():
                 # Use safe column access with case-insensitive fallbacks
@@ -95,16 +91,15 @@ class CPPDataLoader:
     
     def load_spu_data(self):
         """Load SPU pricing data from Reference_SPU_All_Countries_2025.csv"""
-        file_path = CPP_DATA_PATH / "spu" / "Reference_SPU_All_Countries_2025.csv"
-        
-        if not file_path.exists():
-            logger.warning(f"SPU data file not found: {file_path}")
+        rel = "cpp/spu/Reference_SPU_All_Countries_2025.csv"
+        if not regulatory_file_exists(rel):
+            logger.warning(f"SPU data file not found: {rel}")
             return
-        
-        logger.info(f"Loading SPU data from {file_path}...")
-        
+
+        logger.info("Loading SPU data from %s...", rel)
+
         try:
-            df = pd.read_csv(file_path)
+            df = read_regulatory_csv(rel)
             
             # Verify actual column names exist
             cpt_code_col = 'CPT_CODE' if 'CPT_CODE' in df.columns else None
@@ -176,16 +171,15 @@ class CPPDataLoader:
     
     def load_golden_rules(self):
         """Load golden rules from Reference_Golden_Rules.csv"""
-        file_path = CPP_DATA_PATH / "rules" / "Reference_Golden_Rules.csv"
-        
-        if not file_path.exists():
-            logger.warning(f"Golden rules file not found: {file_path}")
+        rel = "cpp/rules/Reference_Golden_Rules.csv"
+        if not regulatory_file_exists(rel):
+            logger.warning(f"Golden rules file not found: {rel}")
             return
-        
-        logger.info(f"Loading golden rules from {file_path}...")
-        
+
+        logger.info("Loading golden rules from %s...", rel)
+
         try:
-            df = pd.read_csv(file_path)
+            df = read_regulatory_csv(rel)
             
             for _, row in df.iterrows():
                 rule_id = f"golden_{row.get('Rule_ID', len(self.rules))}"
@@ -211,16 +205,15 @@ class CPPDataLoader:
     
     def load_country_rules(self):
         """Load country-specific rules from Reference_Country_Specifications.csv"""
-        file_path = CPP_DATA_PATH / "rules" / "Reference_Country_Specifications.csv"
-        
-        if not file_path.exists():
-            logger.warning(f"Country rules file not found: {file_path}")
+        rel = "cpp/rules/Reference_Country_Specifications.csv"
+        if not regulatory_file_exists(rel):
+            logger.warning(f"Country rules file not found: {rel}")
             return
-        
-        logger.info(f"Loading country rules from {file_path}...")
-        
+
+        logger.info("Loading country rules from %s...", rel)
+
         try:
-            df = pd.read_csv(file_path)
+            df = read_regulatory_csv(rel)
             
             for _, row in df.iterrows():
                 country = str(row.get('Country', '')).strip()
@@ -247,16 +240,15 @@ class CPPDataLoader:
     
     def load_indication_rules(self):
         """Load indication-specific rules from Reference_Indications_2025_Q1.csv"""
-        file_path = CPP_DATA_PATH / "rules" / "Reference_Indications_2025_Q1.csv"
-        
-        if not file_path.exists():
-            logger.warning(f"Indication rules file not found: {file_path}")
+        rel = "cpp/rules/Reference_Indications_2025_Q1.csv"
+        if not regulatory_file_exists(rel):
+            logger.warning(f"Indication rules file not found: {rel}")
             return
-        
-        logger.info(f"Loading indication rules from {file_path}...")
-        
+
+        logger.info("Loading indication rules from %s...", rel)
+
         try:
-            df = pd.read_csv(file_path)
+            df = read_regulatory_csv(rel)
             
             for _, row in df.iterrows():
                 indication = str(row.get('Indication', '')).strip()

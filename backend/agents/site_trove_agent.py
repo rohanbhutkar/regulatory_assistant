@@ -7,8 +7,8 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from pathlib import Path
 from config import settings
+from utils.regulatory_data_io import read_regulatory_csv
 from utils.logger import log_error
 from models.schemas import SiteResult, TrialSiteResult, GeographicResult
 import logging
@@ -17,9 +17,6 @@ logger = logging.getLogger(__name__)
 
 class SiteTroveAgent:
     def __init__(self):
-        # Use absolute path to data directory
-        backend_dir = Path(__file__).parent.parent
-        self.data_path = backend_dir.parent / "data"
         self.cache = {}
         self._load_data()
     
@@ -28,7 +25,7 @@ class SiteTroveAgent:
         try:
             # Load the combined site trove data
             logger.info("Loading combined site trove data...")
-            self.site_df = pd.read_csv(self.data_path / "combined_site_trove.csv")
+            self.site_df = read_regulatory_csv("combined_site_trove.csv", low_memory=False)
             
             # Parse trial IDs from the Organization Trialtrove Trial IDs column
             self._parse_trial_ids()

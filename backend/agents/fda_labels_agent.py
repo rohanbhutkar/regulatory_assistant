@@ -7,7 +7,6 @@ import asyncio
 import pandas as pd
 import re
 import json
-from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from models.schemas import ClinicalTrialResult
@@ -15,13 +14,13 @@ from config import settings
 from utils.logger import log_error
 from utils.cache import cache_manager
 from agents.llm_agent import llm_agent
+from utils.regulatory_data_io import read_regulatory_excel
 
 class FDALabelsAgent:
     """Agent for accessing FDA Structured Labels data"""
     
     def __init__(self):
-        self.data_path = Path(__file__).parent.parent / "data"
-        self.excel_file = self.data_path / "FDA_Structured_Labels.xlsx"
+        self.excel_file = "FDA_Structured_Labels.xlsx"
         self.data = None
         self.loaded = False
         
@@ -34,7 +33,7 @@ class FDALabelsAgent:
             print(f"📊 Loading FDA Labels data from {self.excel_file}")
             
             # Load Excel data
-            df = pd.read_excel(self.excel_file)
+            df = read_regulatory_excel(self.excel_file)
             
             # Clean and prepare data
             df = df.fillna('')

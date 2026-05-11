@@ -209,6 +209,9 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      # Stable, predictable name (<=63 chars with default ProjectName). Not set in older revisions;
+      # first create after this change uses this name. Do not change once provisioned.
+      BucketName: !Sub "${ProjectName}-${Environment}-runtime-data-${AWS::AccountId}"
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -501,7 +504,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:GetObject
-                Resource: !Sub ${RuntimeDataBucket.Arn}/runtime-data/*
+                Resource:
+                  - !Sub ${RuntimeDataBucket.Arn}/runtime-data/*
+                  - !Sub ${RuntimeDataBucket.Arn}/regulatory-app-data/*
 
   AlbSecurityGroup:
     Type: AWS::EC2::SecurityGroup

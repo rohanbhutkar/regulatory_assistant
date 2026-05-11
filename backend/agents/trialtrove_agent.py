@@ -8,21 +8,18 @@ import re
 import json
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from pathlib import Path
 from models.schemas import ClinicalTrialResult
 from config import settings
 from utils.logger import log_error
 from utils.cache import cache_manager
 from agents.llm_agent import llm_agent
+from utils.regulatory_data_io import read_regulatory_csv
 
 class TrialTroveAgent:
     """Agent for accessing TrialTrove clinical trial data (2021 onwards)"""
     
     def __init__(self):
-        # Use absolute path to data directory
-        backend_dir = Path(__file__).parent.parent
-        data_dir = backend_dir.parent / "data"
-        self.csv_file = str(data_dir / "combined_trial_trove.csv")
+        self.csv_file = "combined_trial_trove.csv"
         self.data = None
         self.loaded = False
         self.min_year = 2020  # Only data from 2021 onwards
@@ -36,7 +33,7 @@ class TrialTroveAgent:
             print(f"📊 Loading TrialTrove data from {self.csv_file}")
             
             # Load CSV data
-            df = pd.read_csv(self.csv_file, low_memory=False)
+            df = read_regulatory_csv(self.csv_file, low_memory=False)
             
             # Filter for 2021 onwards based on Start Date
             df['Start Date'] = pd.to_datetime(df['Start Date'], errors='coerce')

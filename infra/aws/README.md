@@ -187,7 +187,49 @@ Actions → **Deploy AWS Dev (EKS)**:
 Workflow creates:
 
 - `infra/aws/cloudformation/certificates-dev.yml` stacks (edge + regional)
-- `infra/aws/cloudformation/platform-dev.yml` — VPC, **EKS 1.34**, Fargate profiles, **dual ECR** repos (backend + frontend), ALB SG, IRSA role for backend S3 read on `runtime-data/*` (optional future use)
+- `infra/aws/cloudformation/platform-dev.yml` — VPC, **EKS 1.34**, Fargate profiles, **dual ECR** repos (backend + frontend), ALB SG, IRSA role for backend S3 read on `runtime-data/*` and `regulatory-app-data/*` (workflow syncs repo `data/` to the latter; backend uses `DATA_S3_BUCKET` / `DATA_S3_PREFIX`). The runtime/regulatory S3 bucket is named **`{ProjectName}-{Environment}-runtime-data-{AWS account id}`** (see stack output `RuntimeDataBucketName`).
+
+### Runtime data bucket name (S3)
+
+If this is a **new** account/region and you have never applied `platform-dev.yml` before, the stack creates a bucket named like `lotor-regulatory-assistant-dev-runtime-data-<12-digit-account-id>`. Use that value for local `DATA_S3_BUCKET` or for `aws s3 sync`.
+
+If you already had an older platform stack that created a **random** runtime bucket name, updating to a template that sets an explicit `BucketName` can force **bucket replacement** in CloudFormation. In that case, either stay on the previous template revision or plan a one-time data / IAM migration before updating.
+
+### Local S3 read for developers (IAM)
+
+`platform-dev.yml` grants **`s3:GetObject`** on `regulatory-app-data/*` only to the **EKS backend IRSA role**, not to every human IAM principal. Your SSO user can still have **`s3:PutObject`** (enough to run `aws s3 sync` uploads) while **`s3:GetObject`** is denied by a permission boundary, a custom permission set, or an org SCP—so local tools (pytest, boto3) fail with **AccessDenied** even though sync “worked.”
+
+Confirm with the **same** profile as Python:
+
+```bash
+aws sts get-caller-identity
+aws s3api head-object --bucket "<RuntimeDataBucketName>" --key "regulatory-app-data/payer_data/Productndc_Dim.csv" --region us-east-2
+```
+
+If `head-object` is denied, attach an **inline** (or permission-set) policy to your developer role that allows **`s3:GetObject`** (and **`s3:ListBucket`** on the bucket with prefix `regulatory-app-data/*` for listing). Replace `YOUR_BUCKET` with the stack output `RuntimeDataBucketName`:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RegulatoryDataListPrefix",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET",
+      "Condition": { "StringLike": { "s3:prefix": ["regulatory-app-data/*"] } }
+    },
+    {
+      "Sid": "RegulatoryDataReadObjects",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::YOUR_BUCKET/regulatory-app-data/*"
+    }
+  ]
+}
+```
+
+Production pods do **not** need this; they use the IRSA role already defined in the template.
 
 ### ACM DNS validation
 
@@ -202,8 +244,9 @@ Re-run the workflow until **Check certificate issuance** passes (`ISSUED` for bo
 Same inputs (`deploy_edge`: false). After certs are **ISSUED**, the job:
 
 1. Builds/pushes **Docker** images to ECR (`:${GITHUB_SHA}`).
-2. Configures `kubectl`, patches **CoreDNS** (Fargate), installs **AWS Load Balancer Controller** (`infra/helm/aws-load-balancer-controller-values.yaml`).
-3. Applies **`infra/aws/k8s/dev/regulatory-app.yaml`** (patched in CI).
+2. Syncs repository **`data/`** to `s3://<ProjectName>-<Environment>-runtime-data-<AWS account id>/regulatory-app-data/` when that directory exists (include `FDA_Structured_Labels.xlsx` and CSVs before deploy). The bucket is created by the platform stack with that **fixed** name pattern.
+3. Configures `kubectl`, patches **CoreDNS** (Fargate), installs **AWS Load Balancer Controller** (`infra/helm/aws-load-balancer-controller-values.yaml`).
+4. Applies **`infra/aws/k8s/dev/regulatory-app.yaml`** (patched in CI).
 
 ### Origin DNS
 

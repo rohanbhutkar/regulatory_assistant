@@ -74,6 +74,10 @@ spec:
                   key: value
             - name: REGULATORY_CORS_ORIGINS
               value: ${REGULATORY_CORS_ORIGINS}
+            - name: DATA_S3_BUCKET
+              value: ${RUNTIME_DATA_BUCKET}
+            - name: DATA_S3_PREFIX
+              value: regulatory-app-data
           envFrom:
             - secretRef:
                 name: regulatory-backend-env

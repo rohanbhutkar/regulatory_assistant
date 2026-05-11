@@ -336,6 +336,13 @@ class Settings(BaseSettings):
     CONVERSATION_SUMMARY_HEAD_MESSAGES: int = int(os.getenv("CONVERSATION_SUMMARY_HEAD_MESSAGES", "3"))
     CONVERSATION_SUMMARY_TAIL_MESSAGES: int = int(os.getenv("CONVERSATION_SUMMARY_TAIL_MESSAGES", "6"))
 
+    # Regulatory CSV / Excel under repo ``data/`` (local) or S3 mirror (EKS: sync in deploy workflow).
+    REGULATORY_DATA_DIR: str = os.getenv("REGULATORY_DATA_DIR", "").strip()
+    DATA_S3_BUCKET: str = os.getenv("DATA_S3_BUCKET", "").strip()
+    DATA_S3_PREFIX: str = os.getenv("DATA_S3_PREFIX", "regulatory-app-data").strip().strip("/")
+    AWS_REGION: str = os.getenv("AWS_REGION", "").strip()
+    AWS_ENDPOINT_URL_S3: str = os.getenv("AWS_ENDPOINT_URL_S3", "").strip()
+
     def effective_llm_context_window_tokens(self) -> int:
         """Total context window (combined input + output limit) for the active provider/model."""
         override = int(self.LLM_CONTEXT_WINDOW_TOKENS or 0)
