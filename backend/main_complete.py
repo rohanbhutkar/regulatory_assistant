@@ -11,7 +11,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 import uvicorn
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+import asyncio
 import os
 import sys
 import json
@@ -53,78 +54,92 @@ analysis_routes.set_data_loader(data_loader)  # Initialize analysis routes with 
 insights_routes.set_data_loader(data_loader)  # Initialize insights routes with data loader
 asset_strategy_routes.set_data_loader(data_loader)  # Initialize asset strategy routes with data loader
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup and shutdown events"""
+
+async def _heavy_platform_startup() -> None:
+    """Data + services + reasoning engine (minutes on cold S3/Fargate). Runs after uvicorn accepts traffic."""
     global reasoning_engine
-    
-    # Startup
-    logger.info("🚀 Starting Complete Clinical Knowledge Agent Platform...")
-    
-    # Load essential data for existing routes
+
     logger.info("📊 Loading essential data...")
     await data_loader.load_essential_data()
     logger.info("✅ Essential data loaded")
-    
-    # Initialize asset management service with data
+
     logger.info("💼 Initializing AssetManagementService...")
     count = asset_management_service.initialize_from_trialtrove(data_loader)
     logger.info(f"✅ AssetManagementService initialized with {count} assets")
-    
-    # Initialize data catalog service with auto-registration
+
     logger.info("📚 Initializing DataCatalogService...")
     data_catalog_service.initialize_from_data_loader(data_loader)
     logger.info(f"✅ DataCatalogService initialized with {len(data_catalog_service._data_sources)} data sources")
-    
-    # Initialize scenario engine with data loader
+
     logger.info("🎲 Initializing ScenarioEngine with data integration...")
     scenario_engine.data_loader = data_loader
     logger.info("✅ ScenarioEngine initialized with data-driven parameter distributions")
-    
-    # Initialize price potential engine with data loader
+
     from services.price_potential_engine import price_potential_engine
+
     price_potential_engine.data_loader = data_loader
     logger.info("✅ PricePotentialEngine initialized with CPP SPU and drug costs data")
-    
-    # Initialize HTA intelligence service with data loader
+
     from services.hta_intelligence_service import hta_intelligence_service
+
     hta_intelligence_service.data_loader = data_loader
     logger.info("✅ HTAIntelligenceService initialized with CPP country specs and indications data")
-    
-    # Initialize Financial Modeling Service with data loader
+
     from services.financial_modeling_service import financial_modeling_service
+
     financial_modeling_service.data_loader = data_loader
     logger.info("✅ FinancialModelingService initialized with claims data for patient funnel calculations")
-    
-    # Initialize AI Scenario Generator with data loader
+
     from services.ai_scenario_generator import ai_scenario_generator
+
     ai_scenario_generator.data_loader = data_loader
     logger.info("✅ AIScenarioGenerator initialized with data integration")
-    
-    # Initialize Activity Logger with WebSocket manager
+
     logger.info("📡 Initializing Activity Logger...")
     activity_logger.set_websocket_manager(websocket_manager)
     logger.info("✅ Activity Logger initialized with WebSocket broadcasting")
-    
-    # Initialize Log Capture with WebSocket manager
+
     logger.info("📝 Initializing Log Capture...")
     log_capture.set_websocket_manager(websocket_manager)
     log_capture.enable()
     logger.info("✅ Log Capture enabled - backend logs will be sent to frontend")
-    
-    # Initialize DynamicReasoningEngine
+
     logger.info("🤖 Initializing DynamicReasoningEngine...")
     reasoning_engine = DynamicReasoningEngine()
     active_agents = [k for k, v in reasoning_engine.available_agents.items() if v is not None]
     logger.info(f"✅ DynamicReasoningEngine initialized with {len(active_agents)} active agents")
     logger.info(f"🎯 Active agents: {', '.join(active_agents[:10])}...")
-    
+
     logger.info("🎉 Complete platform ready with all features!")
-    
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events.
+
+    Heavy work runs in a background task so uvicorn binds immediately; /alb-health and probes succeed
+    while data and agents load (can take many minutes on Fargate + S3).
+    """
+    logger.info("🚀 Binding HTTP — platform init in background (Kubernetes probes need this)...")
+    startup_task = asyncio.create_task(_heavy_platform_startup())
+    app.state.startup_task = startup_task
+
+    def _log_startup_failure(t: asyncio.Task) -> None:
+        try:
+            t.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("Background platform startup failed")
+
+    startup_task.add_done_callback(_log_startup_failure)
+
     yield
-    
-    # Shutdown
+
     logger.info("🛑 Shutting down...")
+    startup_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await startup_task
 
 app = FastAPI(
     title="Clinical Knowledge Agent Platform - Complete",
