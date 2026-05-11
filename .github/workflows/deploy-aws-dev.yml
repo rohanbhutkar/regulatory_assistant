@@ -220,6 +220,12 @@ jobs:
           LLM_PROVIDER: ${{ secrets.REGULATORY_LLM_PROVIDER }}
           ANTHROPIC_API_KEY: ${{ secrets.REGULATORY_ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.REGULATORY_OPENAI_API_KEY }}
+          BIOONTOLOGY_API_KEY: ${{ secrets.BIOONTOLOGY_API_KEY }}
+          OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_SEARCH_ENGINE_ID: ${{ secrets.GOOGLE_SEARCH_ENGINE_ID }}
+          AACT_DB_USERNAME: ${{ secrets.AACT_DB_USERNAME }}
+          AACT_DB_PASSWORD: ${{ secrets.AACT_DB_PASSWORD }}
         run: |
           test -n "$DEV_ORIGIN_VERIFY_HEADER"
           kubectl create namespace regulatory-dev --dry-run=client -o yaml | kubectl apply -f -
@@ -232,7 +238,13 @@ jobs:
           kubectl create secret generic regulatory-backend-env -n regulatory-dev \
             --from-literal=LLM_PROVIDER="${LLM_PROVIDER:-anthropic}" \
             --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}" \
-            --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+            --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+            --from-literal=BIOONTOLOGY_API_KEY="${BIOONTOLOGY_API_KEY:-}" \
+            --from-literal=OPENFDA_API_KEY="${OPENFDA_API_KEY:-}" \
+            --from-literal=GOOGLE_API_KEY="${GOOGLE_API_KEY:-}" \
+            --from-literal=GOOGLE_SEARCH_ENGINE_ID="${GOOGLE_SEARCH_ENGINE_ID:-}" \
+            --from-literal=AACT_DB_USERNAME="${AACT_DB_USERNAME:-}" \
+            --from-literal=AACT_DB_PASSWORD="${AACT_DB_PASSWORD:-}"
 
           python - <<'PY'
           import os

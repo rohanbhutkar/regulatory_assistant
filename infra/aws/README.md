@@ -54,9 +54,52 @@ aws cloudformation deploy \
     GitHubBranch=main
 ```
 
-Save output **`GitHubDeployRoleArn`**.
+### If deploy fails or “stack does not exist”
 
-GitHub → **Settings → Secrets and variables → Actions → Variables:**
+1. **`APP_REGION` must be set** (e.g. `export APP_REGION=us-east-2`). If it’s empty, the CLI uses your profile default region — **`describe-stack-events` must use the same `--region`** as `deploy`.
+
+2. **`describe-stack-events` after rollback:** Failed creates often end in **`ROLLBACK_COMPLETE`**. The stack **still exists** until you delete it:
+   ```bash
+   aws cloudformation describe-stacks --region us-east-2 \
+     --stack-name lotor-regulatory-assistant-bootstrap-github-oidc
+   aws cloudformation describe-stack-events --region us-east-2 \
+     --stack-name lotor-regulatory-assistant-bootstrap-github-oidc
+   ```
+   If you want to retry cleanly:
+   ```bash
+   aws cloudformation delete-stack --region us-east-2 \
+     --stack-name lotor-regulatory-assistant-bootstrap-github-oidc
+   aws cloudformation wait stack-delete-complete --region us-east-2 \
+     --stack-name lotor-regulatory-assistant-bootstrap-github-oidc
+   ```
+
+   **`ROLLBACK_COMPLETE`:** the stack still exists but **cannot be updated**. You **must** `delete-stack` + `wait stack-delete-complete`, then run `deploy` again (same template + parameters).
+
+3. **GitHub OIDC provider already exists** (common if **`TIME_build`** or another stack created `token.actions.githubusercontent.com` in this account). You cannot create a second provider for the same URL. List providers:
+   ```bash
+   aws iam list-open-id-connect-providers
+   ```
+   Copy the ARN that ends with **`token.actions.githubusercontent.com`** / looks like **`arn:aws:iam::047492347168:oidc-provider/token.actions.githubusercontent.com`** — note **`https://`** must **not** be part of the CLI ARN.
+
+   Redeploy **referencing the existing provider** (omit creating a duplicate):
+
+   ```bash
+   aws cloudformation deploy \
+     --region "$APP_REGION" \
+     --stack-name lotor-regulatory-assistant-bootstrap-github-oidc \
+     --template-file infra/cloudformation/bootstrap-github-oidc.yml \
+     --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides \
+       ProjectName=lotor-regulatory-assistant \
+       GitHubOrg=rohanbhutkar \
+       GitHubRepo=regulatory_assistant \
+       GitHubBranch=main \
+       ExistingGitHubOidcProviderArn=arn:aws:iam::047492347168:oidc-provider/token.actions.githubusercontent.com
+   ```
+
+   Replace the ARN if your account ID differs.
+
+After a successful deploy, copy output **`GitHubDeployRoleArn`** into GitHub → **Settings → Secrets and variables → Actions → Variables:**
 
 - `AWS_ROLE_TO_ASSUME` = that ARN  
 
@@ -66,15 +109,71 @@ Create a **`dev`** GitHub Environment (optional protection rules).
 
 ## 3. GitHub Actions secrets (environment `dev`)
 
-| Secret | Purpose |
-|--------|---------|
-| `DEV_BASIC_AUTH_HEADER` | `Basic <base64>` for CloudFront viewer auth |
-| `DEV_ORIGIN_VERIFY_HEADER` | Shared secret; must match **`X-Origin-Verify`** CloudFront sends to ALB |
-| `REGULATORY_LLM_PROVIDER` | e.g. `anthropic` or `openai` |
-| `REGULATORY_ANTHROPIC_API_KEY` | If using Anthropic |
-| `REGULATORY_OPENAI_API_KEY` | If using OpenAI |
+In GitHub: **Settings → Secrets and variables → Actions**.
 
-Extend **`.github/workflows/deploy-aws-dev.yml`** / the `kubectl create secret regulatory-backend-env` step with more `--from-literal=` entries (AACT, Redis, etc.) as needed.
+- Put **`AWS_ROLE_TO_ASSUME`** under **Variables** (repository variable is fine; it’s not a password).
+- Put everything below under **Secrets** for the **`dev`** environment (recommended) or repository secrets.
+
+| Name | Required when | Purpose |
+|------|----------------|---------|
+| `DEV_BASIC_AUTH_HEADER` | `deploy_edge=true` | Full **`Authorization`** header value CloudFront checks (HTTP Basic). |
+| `DEV_ORIGIN_VERIFY_HEADER` | Deploy applies Kubernetes manifests | Must match **`X-Origin-Verify`** CloudFront adds for ALB; backend rejects traffic without it when set. |
+| `REGULATORY_LLM_PROVIDER` | Always for LLM | `anthropic` or `openai` (must match how you set keys). |
+| `REGULATORY_ANTHROPIC_API_KEY` | LLM_PROVIDER=anthropic | API key from Anthropic Console. |
+| `REGULATORY_OPENAI_API_KEY` | LLM_PROVIDER=openai | API key from OpenAI Platform. |
+| `BIOONTOLOGY_API_KEY` | BioPortal / BioOntology API usage | From [BioOntology account](https://bioportal.bioontology.org/account); optional if unused. |
+| `OPENFDA_API_KEY` | Higher OpenFDA rate limits | [openFDA API key](https://open.fda.gov/apis/authentication/) (optional). |
+| `GOOGLE_API_KEY` | Custom Search agent | Google Cloud API key with Custom Search API enabled. |
+| `GOOGLE_SEARCH_ENGINE_ID` | Custom Search agent | Programmable Search Engine **cx** ID. |
+| `AACT_DB_USERNAME` | AACT Postgres | CTTI AACT cloud DB username. |
+| `AACT_DB_PASSWORD` | AACT Postgres | CTTI AACT cloud DB password. |
+
+These map through **`kubectl create secret … regulatory-backend-env`** into pod env (same names as **`backend/.env.example`**). Empty secrets omit capability but won’t break the deploy.
+
+### How to generate values
+
+**`DEV_BASIC_AUTH_HEADER` (Basic Auth)** — value must be the full HTTP header **value**: **`Basic `** + base64(**`username:password`**) with no newline.
+
+One-shot (prints the entire secret to paste into GitHub):
+
+```bash
+USER="lotor-dev"
+PASS="$(openssl rand -base64 24)"
+printf 'Basic %s' "$(printf '%s:%s' "$USER" "$PASS" | base64 | tr -d '\n')"
+echo ""
+```
+
+On **GNU/Linux**, if `base64` wraps lines, use: `... | base64 -w0`.
+
+Save **`USER`** / **`PASS`** in your password manager; browsers will prompt for them when CloudFront returns **401**.
+
+**Manual check:**
+
+```bash
+printf '%s:%s' "$USER" "$PASS" | base64 | tr -d '\n'   # must equal part after "Basic "
+```
+
+Smoke tests and `curl` need: `-H "Authorization: Basic …"` (same string as the GitHub secret).
+
+**`DEV_ORIGIN_VERIFY_HEADER`** — long random string (CloudFront → ALB shared secret):
+
+```bash
+openssl rand -base64 48 | tr -d '\n'
+```
+
+Paste the **entire** line into the GitHub secret (no `Basic ` prefix).
+
+**`REGULATORY_LLM_PROVIDER`** — plain text, e.g.:
+
+```text
+anthropic
+```
+
+**`REGULATORY_ANTHROPIC_API_KEY` / `REGULATORY_OPENAI_API_KEY`** — create keys in the vendor console ([Anthropic](https://console.anthropic.com/), [OpenAI](https://platform.openai.com/api-keys)). Paste the full secret string; rotate there if leaked.
+
+**Vendor keys** (`BIOONTOLOGY_API_KEY`, `OPENFDA_API_KEY`, **`GOOGLE_API_KEY`** / **`GOOGLE_SEARCH_ENGINE_ID`**, **`AACT_*`**): create or copy from each provider’s console; paste into GitHub **Secrets** with **exactly** those names so Actions can inject them.
+
+For more variables (Redis, `AACT_DB_SSL_CAFILE`, etc.), add GitHub secrets and extra **`--from-literal=...`** lines next to the existing block in **`.github/workflows/deploy-aws-dev.yml`**.
 
 ---
 
