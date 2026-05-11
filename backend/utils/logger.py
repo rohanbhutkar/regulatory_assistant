@@ -7,32 +7,53 @@ from datetime import datetime
 from loguru import logger
 from config import settings
 
+
+def _resolve_log_dir() -> str:
+    """Writable directory for log files (EKS/Fargate runs uid 1000; /app/logs is often root-owned)."""
+    custom = (os.environ.get("LOG_DIR") or "").strip()
+    if custom:
+        os.makedirs(custom, exist_ok=True)
+        return custom
+    for d in (
+        os.path.join(os.getcwd(), "logs"),
+        os.path.join(os.environ.get("HOME", "/tmp"), "logs"),
+        "/tmp/regulatory-logs",
+    ):
+        try:
+            os.makedirs(d, exist_ok=True)
+            if os.access(d, os.W_OK):
+                return d
+        except OSError:
+            continue
+    return "/tmp"
+
+
 def setup_logger():
     """Setup logger with file and console handlers"""
     # Remove default handler
     logger.remove()
-    
-    # Create logs directory if it doesn't exist
-    os.makedirs("logs", exist_ok=True)
-    
+
+    log_dir = _resolve_log_dir()
+    log_path = os.path.join(log_dir, "cra.log")
+
     # Add console handler
     logger.add(
         sys.stdout,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         level=settings.LOG_LEVEL,
-        colorize=True
+        colorize=True,
     )
-    
+
     # Add file handler
     logger.add(
-        "logs/cra.log",
+        log_path,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
         level=settings.LOG_LEVEL,
         rotation="10 MB",
         retention="7 days",
-        compression="zip"
+        compression="zip",
     )
-    
+
     return logger
 
 def log_query(query: str, user_id: str = None):

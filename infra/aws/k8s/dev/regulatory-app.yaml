@@ -65,6 +65,8 @@ spec:
               value: /tmp
             - name: MPLCONFIGDIR
               value: /tmp/matplotlib
+            - name: LOG_DIR
+              value: /tmp/logs
             - name: REGULATORY_ORIGIN_VERIFY_HEADER_NAME
               value: X-Origin-Verify
             - name: REGULATORY_ORIGIN_VERIFY_HEADER_VALUE
@@ -98,13 +100,15 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 4
+          # Lifespan loads S3/local data + DynamicReasoningEngine before uvicorn serves /alb-health;
+          # cold start on Fargate can exceed the old ~6m budget (36×10s).
           startupProbe:
             httpGet:
               path: /alb-health
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 36
+            failureThreshold: 120
           resources:
             requests:
               cpu: 500m
@@ -165,16 +169,31 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+          # Kubelet sets HOSTNAME to the pod name; Next standalone uses it for bind and then refuses :3000.
+          env:
+            - name: HOSTNAME
+              value: "0.0.0.0"
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /
               port: http
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
           livenessProbe:
             httpGet:
               path: /
               port: http
             periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
           resources:
             requests:
               cpu: 250m

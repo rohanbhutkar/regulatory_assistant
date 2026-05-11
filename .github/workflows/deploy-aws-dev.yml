@@ -278,8 +278,8 @@ jobs:
           Path("/tmp/regulatory-app.yaml").write_text(manifest)
           PY
           kubectl apply -f /tmp/regulatory-app.yaml
-          kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=15m
-          kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=15m
+          kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=25m
+          kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=20m
 
       - name: Print ALB hostname (origin-api DNS)
         if: steps.certs.outputs.issued == 'true'

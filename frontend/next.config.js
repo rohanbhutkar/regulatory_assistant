@@ -1,9 +1,18 @@
 const path = require("path")
+const fs = require("fs")
+
+// Docker build context is `frontend/` only: parent is not the monorepo root, so tracing from `..`
+// breaks standalone output (server.js not at image /app). When repo-root lockfile exists (local dev
+// checkout), keep tracing from parent; otherwise trace from this app.
+const repoRoot = path.join(__dirname, "..")
+const parentHasRootLockfile =
+  fs.existsSync(path.join(repoRoot, "package-lock.json")) ||
+  fs.existsSync(path.join(repoRoot, "yarn.lock"))
+const outputFileTracingRoot = parentHasRootLockfile ? repoRoot : __dirname
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /** Parent folder also has a lockfile; pin tracing root to avoid wrong chunk paths in dev */
-  outputFileTracingRoot: path.join(__dirname, ".."),
+  outputFileTracingRoot,
   output: 'standalone', // Enable standalone output for Docker
   typescript: {
     ignoreBuildErrors: true, // Temporarily ignore TS errors - minor type mismatches only
