@@ -23,7 +23,7 @@ metadata:
     app.kubernetes.io/part-of: lotor-regulatory-assistant
 spec:
   replicas: 1
-  progressDeadlineSeconds: 1800
+  progressDeadlineSeconds: 3600
   revisionHistoryLimit: 1
   strategy:
     type: Recreate
@@ -100,8 +100,7 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 4
-          # Lifespan loads S3/local data + DynamicReasoningEngine before uvicorn serves /alb-health;
-          # cold start on Fargate can exceed the old ~6m budget (36×10s).
+          # startupProbe: long budget for Fargate; heavy init runs in background (main_complete lifespan).
           startupProbe:
             httpGet:
               path: /alb-health
@@ -149,6 +148,7 @@ metadata:
     app.kubernetes.io/part-of: lotor-regulatory-assistant
 spec:
   replicas: 1
+  progressDeadlineSeconds: 2400
   revisionHistoryLimit: 1
   strategy:
     type: RollingUpdate

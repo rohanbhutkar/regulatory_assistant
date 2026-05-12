@@ -137,7 +137,10 @@ jobs:
 
       - name: Sync regulatory app data to S3
         run: |
-          test -n "$RUNTIME_DATA_BUCKET"
+          if [ -z "${RUNTIME_DATA_BUCKET:-}" ]; then
+            echo "::error::RUNTIME_DATA_BUCKET is empty — check platform stack output RuntimeDataBucketName (Capture CloudFormation outputs step)."
+            exit 1
+          fi
           if [ -d data ]; then
             echo "Syncing repo data/ to s3://${RUNTIME_DATA_BUCKET}/regulatory-app-data/"
             aws s3 sync "data/" "s3://${RUNTIME_DATA_BUCKET}/regulatory-app-data/" --exclude ".DS_Store"
@@ -278,8 +281,31 @@ jobs:
           Path("/tmp/regulatory-app.yaml").write_text(manifest)
           PY
           kubectl apply -f /tmp/regulatory-app.yaml
-          kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=15m
-          kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=20m
+          # Clear ProgressDeadlineExceeded / stuck ReplicaSets when apply is a no-op but pods are unhealthy.
+          kubectl rollout restart deployment/regulatory-backend deployment/regulatory-frontend -n regulatory-dev
+          fail=0
+          kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=42m || fail=1
+          kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=30m || fail=1
+          if [ "$fail" != "0" ]; then
+            echo "::error::Deployment rollout did not become ready in time — dumping diagnostics into this log."
+            echo "=== kubectl get pods (-n regulatory-dev) ==="
+            kubectl get pods -n regulatory-dev -o wide || true
+            echo "=== recent events ==="
+            kubectl get events -n regulatory-dev --sort-by='.lastTimestamp' | tail -40 || true
+            echo "=== describe backend pod ==="
+            kubectl describe pod -n regulatory-dev -l app.kubernetes.io/name=regulatory-backend | tail -80 || true
+            echo "=== describe frontend pod ==="
+            kubectl describe pod -n regulatory-dev -l app.kubernetes.io/name=regulatory-frontend | tail -80 || true
+            echo "=== backend logs (current) ==="
+            kubectl logs -n regulatory-dev deploy/regulatory-backend --tail=200 2>&1 || true
+            echo "=== backend logs (previous) ==="
+            kubectl logs -n regulatory-dev deploy/regulatory-backend --previous --tail=120 2>&1 || true
+            echo "=== frontend logs (current) ==="
+            kubectl logs -n regulatory-dev deploy/regulatory-frontend --tail=200 2>&1 || true
+            echo "=== frontend logs (previous) ==="
+            kubectl logs -n regulatory-dev deploy/regulatory-frontend --previous --tail=120 2>&1 || true
+            exit 1
+          fi
 
       - name: Print ALB hostname (origin-api DNS)
         if: steps.certs.outputs.issued == 'true'

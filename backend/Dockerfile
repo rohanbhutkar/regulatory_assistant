@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create logs directory
-RUN mkdir -p logs
+# Writable by uid 1000 (K8s); avoids PermissionError on cra.log without relying on chown GID 1000 existing
+RUN mkdir -p logs && chmod 777 /app/logs
 
 # Expose port
 EXPOSE 8001
