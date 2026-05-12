@@ -34,7 +34,7 @@ async def require_chat_db_session() -> AsyncGenerator[AsyncSession, None]:
             raise
         except Exception as e:
             await session.rollback()
-            logger.warning("chat_db_error cls=%s", type(e).__name__)
+            logger.warning("chat_db_error cls=%s: %s", type(e).__name__, e)
             raise HTTPException(
                 status_code=503,
                 detail={

@@ -6,6 +6,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -44,18 +45,28 @@ def _normalize_async_url(url: str) -> str:
 
 
 def _append_asyncpg_ssl_if_rds(url: str) -> str:
-    """RDS often requires TLS; asyncpg accepts ssl=true in the URL query string."""
+    """RDS requires TLS. asyncpg (via SQLAlchemy URL query) needs sslmode=require, not ssl=true.
+
+    ``ssl=true`` is interpreted as an invalid sslmode token and raises ClientConfigurationError.
+    """
     raw = (os.getenv("CHAT_DB_SSL") or "").strip().lower()
     if raw in ("0", "false", "no", "off"):
         return url
     if ".rds.amazonaws.com" not in url:
         return url
-    q = url.split("?", 1)
-    query = q[1] if len(q) > 1 else ""
-    if "ssl=" in query or "sslmode=" in query:
+    parsed = urlparse(url)
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    keys_lower = {k.lower() for k, _ in pairs}
+    if "sslmode" in keys_lower:
         return url
-    sep = "&" if query else ""
-    return f"{q[0]}?{query}{sep}ssl=true" if query else f"{url}?ssl=true"
+    # Remove mistaken ``ssl=`` pairs (e.g. legacy ssl=true); they are not valid asyncpg sslmodes.
+    pairs = [(k, v) for k, v in pairs if k.lower() != "ssl"]
+    pairs.append(("sslmode", "require"))
+    new_query = urlencode(pairs)
+    rebuilt = urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+    )
+    return rebuilt
 
 
 def chat_db_pool_ready() -> bool:
