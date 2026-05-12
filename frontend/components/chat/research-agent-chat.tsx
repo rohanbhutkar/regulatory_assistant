@@ -3,7 +3,13 @@
 import { useState, useRef, useEffect, useMemo } from "react"
 import { MessageBubble } from "./message-bubble"
 import { ChatInput } from "./chat-input"
-import { QueryProgress, type QueryStep } from "./query-progress"
+import { QueryProcessingPanel } from "./query-processing-panel"
+import { type QueryStep } from "./query-progress"
+import {
+  buildQueryProcessingSnapshot,
+  graphPlanToProcessingSummary,
+  upsertExecutionTraceFromNodeProgress,
+} from "@/lib/query-processing-snapshot"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -15,8 +21,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { Message } from "@/lib/types/chat-types"
-import { ChevronLeft, ChevronRight, Trash2, Square, Terminal, User } from "lucide-react"
+import type {
+  Message,
+  DeepResearchTimelineEntry,
+  QueryProcessingExecutionTraceEntry,
+  QueryProcessingSnapshot,
+  QueryStepDetail,
+} from "@/lib/types/chat-types"
+import { Trash2, Square, Terminal, User } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
@@ -144,13 +156,34 @@ function graphPlanToQuerySteps(
   })
 }
 
-/** One deep-research transparency block (backend sends thinking_lines, detail_bullets, etc.). */
-export type DeepResearchTimelineEntry = {
-  key: string
-  title: string
-  timestamp?: string
-  thinkingLines: string[]
-  bullets: string[]
+function mergeNodeProgressDetail(
+  prev: QueryStepDetail | undefined,
+  nodeData: Record<string, unknown>,
+): QueryStepDetail | undefined {
+  const n: QueryStepDetail = { ...prev }
+  if (typeof nodeData.search_query_used === "string" && nodeData.search_query_used.trim()) {
+    n.search_query_used = nodeData.search_query_used.trim().slice(0, 800)
+  }
+  if (typeof nodeData.search_source === "string" && nodeData.search_source.trim()) {
+    n.search_source = nodeData.search_source.trim().slice(0, 128)
+  }
+  if (typeof nodeData.result_summary === "string" && nodeData.result_summary.trim()) {
+    n.result_summary = nodeData.result_summary.trim().slice(0, 500)
+  }
+  if (typeof nodeData.error === "string" && nodeData.error.trim()) {
+    n.error = nodeData.error.trim().slice(0, 500)
+  }
+  if (typeof nodeData.result_count === "number" && Number.isFinite(nodeData.result_count)) {
+    n.result_count = nodeData.result_count
+  }
+  const has =
+    (n.search_query_used && n.search_query_used.length > 0) ||
+    (n.search_source && n.search_source.length > 0) ||
+    (n.result_summary && n.result_summary.length > 0) ||
+    (n.error && n.error.length > 0) ||
+    n.result_count !== undefined
+  if (!has) return prev
+  return n
 }
 
 function asTrimmedStringArray(v: unknown): string[] {
@@ -192,8 +225,9 @@ export type ResearchRestResponse = {
     confidence?: unknown
     data_quality?: unknown
   }
-  graph_plan?: { nodes?: { agent_type?: string }[] }
+  graph_plan?: { nodes?: { id?: string; type?: string; description?: string; agent_type?: string }[] }
   metadata?: { processing_time?: number }
+  execution_trace?: unknown[]
 }
 
 async function fetchResearchViaRest(body: ResearchRestPayload): Promise<ResearchRestResponse> {
@@ -329,9 +363,15 @@ export function ResearchAgentChat({
   const showRegulatoryEphemeralWelcome =
     variant === "regulatory" && messages.length === 0 && !isLoading
   const [deepResearchTimeline, setDeepResearchTimeline] = useState<DeepResearchTimelineEntry[]>([])
-  /** Which deep-research “thought” card is shown (new events auto-select latest). */
   const [deepResearchSlideIndex, setDeepResearchSlideIndex] = useState(0)
+  const [liveGraphPlanSummary, setLiveGraphPlanSummary] = useState<
+    QueryProcessingSnapshot["graph_plan_summary"] | undefined
+  >(undefined)
+  const [liveExecutionTrace, setLiveExecutionTrace] = useState<QueryProcessingExecutionTraceEntry[]>([])
+  const liveExecutionTraceRef = useRef<QueryProcessingExecutionTraceEntry[]>([])
   const drTimelineLenRef = useRef(0)
+  const queryStepsRef = useRef<QueryStep[]>([])
+  const deepResearchTimelineRef = useRef<DeepResearchTimelineEntry[]>([])
   const [sessionDeleteDialogOpen, setSessionDeleteDialogOpen] = useState(false)
   const abortResearchRef = useRef(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
@@ -384,6 +424,18 @@ export function ResearchAgentChat({
       wsRef.current = null
     }
   }, [sessionId])
+
+  useEffect(() => {
+    queryStepsRef.current = querySteps
+  }, [querySteps])
+
+  useEffect(() => {
+    deepResearchTimelineRef.current = deepResearchTimeline
+  }, [deepResearchTimeline])
+
+  useEffect(() => {
+    liveExecutionTraceRef.current = liveExecutionTrace
+  }, [liveExecutionTrace])
 
   useEffect(() => {
     const n = deepResearchTimeline.length
@@ -792,6 +844,20 @@ export function ResearchAgentChat({
           remotePersistence && variant === "regulatory" && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
             ? crypto.randomUUID()
             : `ai-${Date.now()}`
+        const graphPlan = json.graph_plan
+        const completedIds = new Set<string>()
+        if (graphPlan?.nodes && Array.isArray(graphPlan.nodes)) {
+          for (const n of graphPlan.nodes) {
+            if (n && typeof n === "object" && typeof n.id === "string" && n.id) completedIds.add(n.id)
+          }
+        }
+        const restSteps = graphPlanToQuerySteps(graphPlan, completedIds)
+        const queryProcessing = buildQueryProcessingSnapshot({
+          querySteps: restSteps,
+          deepResearchTimeline: [],
+          graphPlan,
+          executionTrace: json.execution_trace,
+        })
         const aiMessage: Message = {
           id: assistantId,
           role: "assistant",
@@ -805,13 +871,19 @@ export function ResearchAgentChat({
             data_quality: synthesis?.data_quality ?? "good",
             processing_time: json.metadata?.processing_time ?? 0,
             agents_used:
-              json.graph_plan?.nodes?.map((n) => n.agent_type).filter(Boolean) as string[] | undefined,
+              json.graph_plan?.nodes
+                ?.map((n) => (typeof n.agent_type === "string" ? n.agent_type : ""))
+                .filter(Boolean) as string[] | undefined,
+            ...(queryProcessing ? { query_processing: queryProcessing } : {}),
           },
         }
         setMessages((prev) => [...prev, aiMessage])
         setIsLoading(false)
         setQuerySteps([])
         setCurrentStep(undefined)
+        setDeepResearchTimeline([])
+        setLiveGraphPlanSummary(undefined)
+        setLiveExecutionTrace([])
         void persistRemoteAssistant(userPersistId, aiMessage)
     }
 
@@ -852,6 +924,8 @@ export function ResearchAgentChat({
 
       ws.onopen = () => {
         setDeepResearchTimeline([])
+        setLiveGraphPlanSummary(undefined)
+        setLiveExecutionTrace([])
         drTimelineLenRef.current = 0
 
         // Start keep-alive ping every 30 seconds
@@ -980,6 +1054,31 @@ export function ResearchAgentChat({
             if (typeof omitted === "number" && omitted > 0) {
               bullets.push(`… and ${omitted} more node(s) not listed here.`)
             }
+            const refl = d.reflection
+            if (refl && typeof refl === "object") {
+              const rf = refl as Record<string, unknown>
+              if (rf.usefulness_score !== undefined) {
+                bullets.push(`Usefulness score: ${String(rf.usefulness_score)}`)
+              }
+              if (rf.source_quality !== undefined) {
+                bullets.push(`Source quality: ${String(rf.source_quality)}`)
+              }
+              if (typeof rf.rationale === "string" && rf.rationale.trim()) {
+                const rat = rf.rationale.trim()
+                bullets.push(rat.length > 1200 ? `${rat.slice(0, 1200)}…` : rat)
+              }
+              if (typeof rf.what_changed === "string" && rf.what_changed.trim()) {
+                const wc = rf.what_changed.trim()
+                bullets.push(`Draft update: ${wc.length > 600 ? `${wc.slice(0, 600)}…` : wc}`)
+              }
+            }
+            if (typeof d.working_answer_excerpt === "string" && d.working_answer_excerpt.trim()) {
+              const ex = d.working_answer_excerpt.trim()
+              bullets.push(`Working answer (excerpt): ${ex.length > 900 ? `${ex.slice(0, 900)}…` : ex}`)
+            }
+            if (d.skip_remaining_searches === true) {
+              bullets.push("Later searches may be skipped based on this reflection.")
+            }
             const phaseLabel =
               typeof data.phase === "string" && data.phase
                 ? data.phase.replace(/_/g, " ")
@@ -1061,34 +1160,48 @@ export function ResearchAgentChat({
             if (steps.length > 0) {
               setQuerySteps(steps)
             }
+            setLiveGraphPlanSummary(graphPlanToProcessingSummary(graphPlan))
             return
           }
           
           // Handle node_progress updates
           if (data.type === "node_progress") {
-            const nodeData = data.data
-            const nodeId = nodeData?.node_id
-            const status = nodeData?.status
-            
-            
+            const nodeData = data.data as Record<string, unknown> | undefined
+            const nodeId = typeof nodeData?.node_id === "string" ? nodeData.node_id : undefined
+            const status = typeof nodeData?.status === "string" ? nodeData.status : undefined
+
             if (nodeId) {
               if (status === "started" || status === "in_progress") {
                 setCurrentStep(nodeId)
               }
+              setLiveExecutionTrace((prev) => upsertExecutionTraceFromNodeProgress(prev, nodeData || {}))
               setQuerySteps((prev) => {
                 const idx = prev.findIndex((s) => s.id === nodeId)
+                const mergedDetail = mergeNodeProgressDetail(
+                  idx >= 0 ? prev[idx]?.detail : undefined,
+                  nodeData || {},
+                )
                 if (idx < 0) {
                   const name = formatGraphNodeIdForDisplay(nodeId, prev.length)
                   const desc =
                     typeof nodeData?.description === "string" && nodeData.description
                       ? nodeData.description
                       : "Additional research step"
-                  const agent = typeof nodeData?.node_type === "string" ? nodeData.node_type : "unknown"
+                  const agent =
+                    typeof nodeData?.node_type === "string" ? nodeData.node_type : "unknown"
                   let st: QueryStep["status"] = "pending"
                   if (status === "started" || status === "in_progress") st = "in-progress"
                   else if (status === "completed" || status === "skipped") st = "completed"
                   else if (status === "failed") st = "error"
-                  return [...prev, { id: nodeId, name, description: desc, status: st, agent }]
+                  const row: QueryStep = {
+                    id: nodeId,
+                    name,
+                    description: desc,
+                    status: st,
+                    agent,
+                  }
+                  if (mergedDetail) row.detail = mergedDetail
+                  return [...prev, row]
                 }
                 return prev.map((step) => {
                   if (step.id !== nodeId) return step
@@ -1100,20 +1213,14 @@ export function ResearchAgentChat({
                   } else if (status === "failed") {
                     updates.status = "error"
                   }
-                  return { ...step, ...updates }
+                  const nextDetail = mergeNodeProgressDetail(step.detail, nodeData || {})
+                  return {
+                    ...step,
+                    ...updates,
+                    ...(nextDetail ? { detail: nextDetail } : {}),
+                  }
                 })
               })
-            }
-            if (nodeData?.status === "completed" && nodeData?.result_summary) {
-              const progressMessage: Message = {
-                id: `progress-${Date.now()}`,
-                role: "assistant",
-                content: `✓ ${nodeData.node_id}: ${nodeData.result_summary}`,
-                timestamp: new Date(),
-                agentName: nodeData.node_id,
-                agentType: "progress",
-              }
-              setMessages((prev) => [...prev, progressMessage])
             }
             return
           }
@@ -1128,6 +1235,15 @@ export function ResearchAgentChat({
               remotePersistence && variant === "regulatory" && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                 ? crypto.randomUUID()
                 : `ai-${Date.now()}`
+            const serverTrace = data.data?.execution_trace
+            const executionTraceForSnap =
+              Array.isArray(serverTrace) && serverTrace.length > 0 ? serverTrace : liveExecutionTraceRef.current
+            const queryProcessing = buildQueryProcessingSnapshot({
+              querySteps: queryStepsRef.current,
+              deepResearchTimeline: deepResearchTimelineRef.current,
+              graphPlan: data.data?.graph_plan,
+              executionTrace: executionTraceForSnap,
+            })
             const aiMessage: Message = {
               id: assistantWsId,
               role: "assistant",
@@ -1141,17 +1257,19 @@ export function ResearchAgentChat({
                 data_quality: synthesis?.data_quality || "good",
                 processing_time: data.data?.processing_time || 0,
                 agents_used: data.data?.graph_plan?.nodes?.map((n: any) => n.agent_type) || [],
+                ...(queryProcessing ? { query_processing: queryProcessing } : {}),
               },
             }
 
             setMessages((prev) => [...prev, aiMessage])
             setIsLoading(false)
 
-            // Clear progress steps
+            // Clear progress steps & deep-research cards (snapshot already captured on the message)
             setQuerySteps([])
             setCurrentStep(undefined)
-
-            // Clean up ping interval
+            setDeepResearchTimeline([])
+            setLiveGraphPlanSummary(undefined)
+            setLiveExecutionTrace([])
             if ((ws as any).pingInterval) {
               clearInterval((ws as any).pingInterval)
             }
@@ -1363,6 +1481,9 @@ export function ResearchAgentChat({
     setIsLoading(false)
     setQuerySteps([])
     setCurrentStep(undefined)
+    setDeepResearchTimeline([])
+    setLiveGraphPlanSummary(undefined)
+    setLiveExecutionTrace([])
   }
 
   const handleRegenerateAssistant = (assistantIndex: number) => {
@@ -1665,122 +1786,21 @@ export function ResearchAgentChat({
               )}
             >
             <div className={cn("mx-auto w-full", isEnterprise ? "max-w-3xl px-4 sm:px-8 py-3" : "max-w-5xl px-4 sm:px-6 py-3")}>
-              <div className="flex gap-3 w-full pb-1">
-                <div className="flex-shrink-0 h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
-                  <div className="h-4 w-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  {querySteps.length > 0 ? (
-                    <QueryProgress steps={querySteps} currentStep={currentStep} />
-                  ) : (
-                    <div className="bg-muted/50 border border-border/40 rounded-lg px-3 py-2 max-w-2xl">
-                      <p className="text-xs text-muted-foreground">Analyzing your query and planning execution…</p>
-                    </div>
-                  )}
-                  {deepResearchTimeline.length > 0 && (
-                    <div className="mt-3 max-w-2xl rounded-lg border border-border/60 bg-card/90 shadow-sm overflow-hidden">
-                      <div className="flex items-center justify-between gap-2 border-b border-border/50 bg-muted/30 px-3 py-2 shrink-0">
-                        <p className="text-sm font-semibold text-foreground">Agent thinking</p>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            disabled={deepResearchSlideIndex <= 0}
-                            aria-label="Previous thought"
-                            onClick={() => setDeepResearchSlideIndex((i) => Math.max(0, i - 1))}
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </Button>
-                          <span className="text-xs text-muted-foreground tabular-nums min-w-[3.5rem] text-center">
-                            {deepResearchSlideIndex + 1} / {deepResearchTimeline.length}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            disabled={deepResearchSlideIndex >= deepResearchTimeline.length - 1}
-                            aria-label="Next thought"
-                            onClick={() =>
-                              setDeepResearchSlideIndex((i) =>
-                                Math.min(deepResearchTimeline.length - 1, i + 1),
-                              )
-                            }
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                      {(() => {
-                        const entry = deepResearchTimeline[deepResearchSlideIndex]
-                        if (!entry) {
-                          return (
-                            <div className="px-4 py-6 text-sm text-muted-foreground">
-                              Updating agent thinking…
-                            </div>
-                          )
-                        }
-                        return (
-                          <div key={entry.key} className="px-4 py-3 min-h-[6rem] transition-opacity">
-                            <h3 className="text-base font-semibold text-foreground leading-tight">
-                              {entry.title}
-                            </h3>
-                            {entry.timestamp ? (
-                              <p className="text-xs text-muted-foreground mt-1 tabular-nums">
-                                {entry.timestamp}
-                              </p>
-                            ) : null}
-                            {entry.thinkingLines.length > 0 ? (
-                              <ul className="mt-3 space-y-2 list-none pl-0">
-                                {entry.thinkingLines.map((t, j) => (
-                                  <li
-                                    key={j}
-                                    className="border-l-[3px] border-primary/35 pl-3 text-sm leading-relaxed text-foreground/90"
-                                  >
-                                    {t}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
-                            {entry.bullets.length > 0 ? (
-                              <div className="mt-3 space-y-2">
-                                {entry.bullets.map((b, j) => (
-                                  <div
-                                    key={j}
-                                    className="border-l-[3px] border-muted-foreground/25 pl-3 text-sm leading-relaxed text-foreground/90 [&_.prose]:my-0 [&_.prose_p]:mb-1 [&_.prose_p:last-child]:mb-0"
-                                  >
-                                    <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_li>p]:my-1 [&_li>p:first-child]:mt-0 [&_li>p:last-child]:mb-0">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{b}</ReactMarkdown>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        )
-                      })()}
-                      <div className="flex flex-wrap gap-1.5 px-3 py-2 border-t border-border/40 bg-muted/20 shrink-0">
-                        {deepResearchTimeline.map((e, i) => (
-                          <button
-                            key={e.key}
-                            type="button"
-                            onClick={() => setDeepResearchSlideIndex(i)}
-                            className={cn(
-                              "h-2 min-w-2 rounded-full transition-all",
-                              i === deepResearchSlideIndex
-                                ? "w-6 bg-primary"
-                                : "w-2 bg-muted-foreground/30 hover:bg-muted-foreground/50",
-                            )}
-                            aria-label={`Thought ${i + 1}: ${e.title}`}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <QueryProcessingPanel
+                leading={
+                  <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
+                    <div className="h-4 w-4 border-2 border-muted-foreground/20 border-t-muted-foreground rounded-full animate-spin" />
+                  </div>
+                }
+                querySteps={querySteps}
+                currentStep={currentStep}
+                deepResearchTimeline={deepResearchTimeline}
+                deepResearchSlideIndex={deepResearchSlideIndex}
+                onDeepResearchSlideIndexChange={setDeepResearchSlideIndex}
+                queryProgressMode="live"
+                graphPlanSummary={liveGraphPlanSummary}
+                executionTrace={liveExecutionTrace.length > 0 ? liveExecutionTrace : undefined}
+              />
             </div>
             </div>
           </div>

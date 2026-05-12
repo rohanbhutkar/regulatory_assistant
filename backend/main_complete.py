@@ -27,6 +27,50 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
+_WS_EXEC_TRACE_KEYS = frozenset(
+    {
+        "node_id",
+        "node_type",
+        "status",
+        "start_time",
+        "end_time",
+        "description",
+        "error",
+        "success",
+        "search_query_used",
+        "search_source",
+        "result_count",
+        "result_summary",
+    }
+)
+
+
+def _slim_execution_trace_for_ws(trace, *, max_entries: int = 100):
+    """Whitelist + cap strings for WebSocket / REST clients (avoid huge blobs)."""
+    if not isinstance(trace, list):
+        return []
+    out = []
+    slice_ = trace[-max_entries:] if len(trace) > max_entries else trace
+    for ent in slice_:
+        if not isinstance(ent, dict):
+            continue
+        slim = {}
+        for k, v in ent.items():
+            if k not in _WS_EXEC_TRACE_KEYS:
+                continue
+            if isinstance(v, bool) or v is None:
+                slim[k] = v
+            elif isinstance(v, (int, float)):
+                slim[k] = v
+            elif isinstance(v, str):
+                slim[k] = v[:2000]
+            else:
+                slim[k] = str(v)[:500]
+        if slim:
+            out.append(slim)
+    return out
+
+
 # Import existing API routes (do not import DynamicReasoningEngine here — that module
 # pulls the full agent graph and delays uvicorn bind; see _blocking_post_essential_startup.)
 from api import persona_routes, asset_routes, trial_routes, commercial_routes, data_routes, protocol_routes, analysis_routes, site_map_routes, cpp_routes, fmv_routes, insights_routes
@@ -453,7 +497,10 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                             "data": {
                                 "synthesis": response.synthesis.dict() if hasattr(response, 'synthesis') else {"answer": str(response)},
                                 "graph_plan": response.graph_plan.dict() if hasattr(response, 'graph_plan') and response.graph_plan else None,
-                                "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {}
+                                "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {},
+                                "execution_trace": _slim_execution_trace_for_ws(
+                                    getattr(response, "execution_trace", None) or []
+                                ),
                             },
                         },
                     ):
@@ -517,7 +564,10 @@ async def research_query(request: dict):
             "success": True,
             "synthesis": response.synthesis.dict() if hasattr(response, 'synthesis') else {"answer": str(response)},
             "graph_plan": response.graph_plan.dict() if hasattr(response, 'graph_plan') and response.graph_plan else None,
-            "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {}
+            "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {},
+            "execution_trace": _slim_execution_trace_for_ws(
+                getattr(response, "execution_trace", None) or []
+            ),
         }
     
     except Exception as e:

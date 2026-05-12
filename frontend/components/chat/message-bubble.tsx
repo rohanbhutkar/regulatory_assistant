@@ -1,11 +1,20 @@
 "use client"
 
+import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import type { Message } from "@/lib/types/chat-types"
 import { normalizeChatCitations } from "@/lib/chat-citations"
-import { User, Bot, FileText, ExternalLink, RotateCcw } from "lucide-react"
+import { parseQueryProcessingSnapshot } from "@/lib/query-processing-snapshot"
+import { QueryProcessingPanel } from "@/components/chat/query-processing-panel"
+import { User, Bot, FileText, ExternalLink, RotateCcw, Brain } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -26,6 +35,21 @@ export function MessageBubble({
   const isUser = message.role === "user"
   const ent = appearance === "enterprise"
   const citationItems = normalizeChatCitations(message.metadata?.citations)
+  const thinkingSnapshot = useMemo(
+    () => parseQueryProcessingSnapshot(message.metadata?.query_processing),
+    [message.metadata?.query_processing],
+  )
+  const showThinking =
+    !isUser &&
+    message.agentType !== "progress" &&
+    thinkingSnapshot &&
+    (thinkingSnapshot.query_steps.length > 0 ||
+      thinkingSnapshot.deep_research_timeline.length > 0 ||
+      !!thinkingSnapshot.graph_plan_summary?.nodes?.length ||
+      !!(thinkingSnapshot.graph_plan_summary?.reasoning && thinkingSnapshot.graph_plan_summary.reasoning.trim()) ||
+      (thinkingSnapshot.execution_trace?.length ?? 0) > 0)
+  const [thinkingOpen, setThinkingOpen] = useState(false)
+  const [replaySlideIndex, setReplaySlideIndex] = useState(0)
   const markdownComponents = {
     table: ({ children }: { children?: React.ReactNode }) => (
       <div className="not-prose my-4 w-full overflow-x-auto rounded-xl border border-border/60 bg-card/70 shadow-sm">
@@ -48,6 +72,7 @@ export function MessageBubble({
   }
 
   return (
+    <>
     <div
       className={cn(
         "flex mb-6 animate-fade-in w-full",
@@ -92,6 +117,24 @@ export function MessageBubble({
           <span className="text-[10px] text-muted-foreground">
             {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </span>
+          {showThinking && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] font-medium gap-1"
+              onClick={() => {
+                if (thinkingSnapshot) {
+                  const n = thinkingSnapshot.deep_research_timeline.length
+                  setReplaySlideIndex(n > 0 ? n - 1 : 0)
+                }
+                setThinkingOpen(true)
+              }}
+            >
+              <Brain className="h-3.5 w-3.5" />
+              Show my thinking
+            </Button>
+          )}
         </div>
 
         {/* Message Bubble */}
@@ -265,5 +308,28 @@ export function MessageBubble({
         )}
       </div>
     </div>
+
+      {showThinking && thinkingSnapshot && (
+        <Dialog open={thinkingOpen} onOpenChange={setThinkingOpen}>
+          <DialogContent className="max-w-3xl max-h-[min(85vh,720px)] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Query processing</DialogTitle>
+            </DialogHeader>
+            <div className="pt-1">
+              <QueryProcessingPanel
+                querySteps={thinkingSnapshot.query_steps}
+                currentStep={undefined}
+                deepResearchTimeline={thinkingSnapshot.deep_research_timeline}
+                deepResearchSlideIndex={replaySlideIndex}
+                onDeepResearchSlideIndexChange={setReplaySlideIndex}
+                queryProgressMode="replay"
+                graphPlanSummary={thinkingSnapshot.graph_plan_summary}
+                executionTrace={thinkingSnapshot.execution_trace}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   )
 }

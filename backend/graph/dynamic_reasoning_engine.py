@@ -92,6 +92,88 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _first_result_title_sample(results: Any) -> str:
+    if not isinstance(results, list) or not results:
+        return ""
+    r0 = results[0]
+    if isinstance(r0, dict):
+        t = (
+            r0.get("title")
+            or r0.get("brief_title")
+            or r0.get("nct_id")
+            or r0.get("name")
+            or r0.get("drug_name")
+        )
+        return str(t)[:120] if t else ""
+    if hasattr(r0, "dict"):
+        try:
+            d = r0.dict()
+        except Exception:
+            return ""
+        if isinstance(d, dict):
+            t = d.get("title") or d.get("nct_id")
+            return str(t)[:120] if t else ""
+    return ""
+
+
+def _node_progress_search_transparency(
+    search_query: str,
+    source: str,
+    results: Any,
+    skipped: bool,
+    skip_reason: Optional[str],
+) -> Dict[str, Any]:
+    """Bounded fields for WebSocket node_progress (search nodes)."""
+    out: Dict[str, Any] = {}
+    sq = (search_query or "").strip()
+    if sq:
+        out["search_query_used"] = sq[:800]
+    src = (source or "").strip()
+    if src:
+        out["search_source"] = src[:128]
+    if skipped:
+        out["result_count"] = 0
+        out["result_summary"] = (skip_reason or "Search skipped.")[:500]
+        return out
+    if results is None:
+        out["result_count"] = 0
+        out["result_summary"] = f"No results ({src or 'unknown'})."[:500]
+        return out
+    if isinstance(results, list):
+        n = len(results)
+        out["result_count"] = n
+        ex = _first_result_title_sample(results)
+        tail = f" Example: {ex}" if ex else ""
+        out["result_summary"] = f"{n} result(s) from {src or 'search'}.{tail}"[:500]
+        return out
+    out["result_count"] = 1
+    out["result_summary"] = f"1 result object from {src or 'search'}."[:500]
+    return out
+
+
+def _node_progress_generic_transparency(node_type: str, results: Any) -> Dict[str, Any]:
+    """Short summary for non-search node completions."""
+    out: Dict[str, Any] = {}
+    if results is None:
+        out["result_count"] = 0
+        out["result_summary"] = f"{node_type}: no output"[:400]
+        return out
+    if isinstance(results, list):
+        n = len(results)
+        out["result_count"] = n
+        out["result_summary"] = f"{node_type}: {n} item(s)"[:400]
+        return out
+    if isinstance(results, dict):
+        out["result_count"] = 1
+        summ = str(results.get("summary") or results.get("reasoning") or results.get("answer") or "done")[:400]
+        out["result_summary"] = f"{node_type}: {summ}"[:500]
+        return out
+    out["result_count"] = 1
+    out["result_summary"] = f"{node_type}: completed"[:400]
+    return out
+
+
 # Live HTTP API agents (no local site database); uniform `search(query, max_results)`.
 LIVE_API_GRAPH_SOURCES = frozenset(
     {
@@ -1168,6 +1250,7 @@ Return ONLY valid JSON without markdown formatting.
                         "start_time": datetime.now().isoformat(),
                         "description": node.description
                     })
+                    progress_extra_fields: Dict[str, Any] = {}
                     
                     # Send start progress callback if provided
                     if progress_callback:
@@ -1838,6 +1921,32 @@ Return ONLY valid JSON without markdown formatting.
                             else:
                                 print(f"❌ Unknown source: {source}")
                                 new_state["execution_results"][node.id] = []
+                        try:
+                            _src = str(
+                                source
+                                or (
+                                    node.parameters.get("source")
+                                    if isinstance(node.parameters, dict)
+                                    else ""
+                                )
+                                or ""
+                            )[:128]
+                            _res = new_state["execution_results"].get(node.id)
+                            _reason = None
+                            if (
+                                dr_search_skipped
+                                and isinstance(_res, list)
+                                and _res
+                                and isinstance(_res[0], dict)
+                            ):
+                                _reason = str(_res[0].get("reason") or "")
+                            progress_extra_fields.update(
+                                _node_progress_search_transparency(
+                                    search_query, _src, _res, dr_search_skipped, _reason
+                                )
+                            )
+                        except Exception as _tex:
+                            logger.debug("search progress transparency skipped: %s", _tex)
                     
                     elif node.type == "analyze":
                         # Use LLM to analyze results from previous nodes
@@ -3229,7 +3338,20 @@ FORMATTED EXTRACTION:
                             start_time = datetime.now().isoformat()
                         if not end_time:
                             end_time = datetime.now().isoformat()
-                        
+
+                        if not progress_extra_fields and node.type != "search":
+                            try:
+                                progress_extra_fields.update(
+                                    _node_progress_generic_transparency(
+                                        str(node.type),
+                                        new_state["execution_results"].get(node.id),
+                                    )
+                                )
+                            except Exception as _gex:
+                                logger.debug(
+                                    "generic progress transparency skipped: %s", _gex
+                                )
+
                         progress_data = {
                             "node_id": node.id,
                             "node_type": node.type,
@@ -3239,7 +3361,9 @@ FORMATTED EXTRACTION:
                             "description": node.description,
                             "error": ""
                         }
-                        
+                        if progress_extra_fields:
+                            progress_data.update(progress_extra_fields)
+
                         try:
                             await progress_callback(progress_data)
                             print(f"✅ Progress callback completed for node: {node.id}")
@@ -3301,7 +3425,7 @@ FORMATTED EXTRACTION:
                             start_time = datetime.now().isoformat()
                         if not end_time:
                             end_time = datetime.now().isoformat()
-                        
+
                         progress_data = {
                             "node_id": node.id,
                             "node_type": node.type,
@@ -3311,6 +3435,9 @@ FORMATTED EXTRACTION:
                             "description": node.description,
                             "error": str(e)
                         }
+                        _err_s = str(e).strip()
+                        if _err_s:
+                            progress_data["result_summary"] = _err_s[:500]
                         try:
                             await progress_callback(progress_data)
                         except Exception as callback_error:

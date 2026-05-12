@@ -3,6 +3,8 @@
  * Set NEXT_PUBLIC_CHAT_RELATIVE=true and Next rewrites to proxy /api → backend if you need same-origin cookies in dev.
  */
 
+import { slimQueryProcessingForPersist } from "./query-processing-snapshot"
+
 function chatPath(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`
   if (!p.startsWith("/api/chat")) {
@@ -183,6 +185,8 @@ export function slimMetadataForChatPersist(meta: Record<string, unknown> | undef
   if (Array.isArray(agents)) {
     out.agents_used = agents.filter((x): x is string => typeof x === "string").slice(0, 100)
   }
+  const qp = slimQueryProcessingForPersist(meta.query_processing)
+  if (qp) out.query_processing = qp
   return out
 }
 
