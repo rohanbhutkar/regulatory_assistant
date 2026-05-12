@@ -71,7 +71,6 @@ export class ActivityWebSocketClient {
       this.ws = new WebSocket(wsUrl)
 
       this.ws.onopen = () => {
-        console.log('Activity WebSocket connected')
         this.isConnecting = false
         this.reconnectAttempts = 0
         if (this.pingTimer) clearInterval(this.pingTimer)
@@ -98,18 +97,16 @@ export class ActivityWebSocketClient {
               handlers.forEach(handler => handler(activityEvent))
             }
           }
-        } catch (e) {
-          console.error('Error parsing WebSocket message:', e)
+        } catch {
+          /* ignore malformed frames */
         }
       }
 
-      this.ws.onerror = (error) => {
-        console.error('Activity WebSocket error:', error)
+      this.ws.onerror = () => {
         this.isConnecting = false
       }
 
       this.ws.onclose = () => {
-        console.log('Activity WebSocket disconnected')
         this.isConnecting = false
         if (this.pingTimer) {
           clearInterval(this.pingTimer)
@@ -129,8 +126,7 @@ export class ActivityWebSocketClient {
           this.connect(this.lastOnEvent)
         }, delay)
       }
-    } catch (e) {
-      console.error('Error connecting Activity WebSocket:', e)
+    } catch {
       this.isConnecting = false
     }
   }

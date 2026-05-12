@@ -138,10 +138,8 @@ export function ChatInterface({
           })
           
           response = await wsPromise
-        } catch (wsError) {
-          console.log("WebSocket failed, falling back to HTTP API:", wsError)
-          
-          // Fallback to HTTP API
+        } catch {
+          // Fall through to HTTP API below
           const apiResponse = await fetch('http://localhost:8001/api/data/trialtrove', {
             method: 'POST',
             headers: {
@@ -181,9 +179,8 @@ export function ChatInterface({
       }
 
       setMessages(prev => [...prev, assistantMessage])
-    } catch (error) {
-      console.error('Error sending message:', error)
-      toast.error('Failed to send message')
+    } catch {
+      toast.error("Failed to send message")
       
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),

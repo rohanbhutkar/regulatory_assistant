@@ -155,6 +155,37 @@ export async function chatListMessages(sessionId: string): Promise<RemoteMessage
   }))
 }
 
+/** JSON-safe, size-bounded metadata for Postgres chat persistence (avoids 413 / serialization failures). */
+export function slimMetadataForChatPersist(meta: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!meta || typeof meta !== "object") return {}
+  const out: Record<string, unknown> = {}
+  const ct = meta.citations
+  if (Array.isArray(ct)) {
+    out.citations = ct.slice(0, 80).map((c) => {
+      if (c && typeof c === "object" && "text" in (c as object)) {
+        const o = c as Record<string, unknown>
+        return {
+          text: String(o.text ?? "").slice(0, 4000),
+          url: typeof o.url === "string" ? o.url.slice(0, 2000) : "",
+        }
+      }
+      return { text: String(c).slice(0, 4000), url: "" }
+    })
+  }
+  if (typeof meta.confidence === "number" || typeof meta.confidence === "string") {
+    out.confidence = meta.confidence
+  }
+  if (typeof meta.data_quality === "string") out.data_quality = meta.data_quality
+  if (typeof meta.processing_time === "number" && Number.isFinite(meta.processing_time)) {
+    out.processing_time = meta.processing_time
+  }
+  const agents = meta.agents_used
+  if (Array.isArray(agents)) {
+    out.agents_used = agents.filter((x): x is string => typeof x === "string").slice(0, 100)
+  }
+  return out
+}
+
 export async function chatAppendMessage(
   sessionId: string,
   body: { id: string; role: string; content: string; metadata?: Record<string, unknown> },
@@ -180,12 +211,12 @@ export async function chatCompleteTurn(
     assistant: { id: string; content: string; metadata?: Record<string, unknown> }
   },
 ): Promise<void> {
-  const idem = `asst-${body.user_message_client_id}`
+  const idem = `asst-${body.user_message_client_id}-${body.assistant.id}`
   const res = await chatFetch(`/sessions/${sessionId}/complete-turn`, {
     method: "POST",
     body: JSON.stringify({
       content: body.assistant.content,
-      metadata: body.assistant.metadata ?? {},
+      metadata: slimMetadataForChatPersist(body.assistant.metadata),
       idempotency_key: idem,
     }),
     headers: { "Idempotency-Key": idem },

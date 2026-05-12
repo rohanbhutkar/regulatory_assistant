@@ -53,7 +53,6 @@ function RegulatoryIntelligenceRemote() {
   const [starredOnly, setStarredOnly] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
-  const [libraryOpen, setLibraryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const sessionsRef = useRef(sessions)
   sessionsRef.current = sessions
@@ -260,8 +259,6 @@ function RegulatoryIntelligenceRemote() {
         onSearchQueryChange={setSearchQuery}
         searchPanelOpen={searchPanelOpen}
         onSearchPanelOpenChange={setSearchPanelOpen}
-        libraryOpen={libraryOpen}
-        onLibraryOpenChange={setLibraryOpen}
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
         onClearAllData={() => void onClearAllData()}
@@ -281,6 +278,7 @@ function RegulatoryIntelligenceRemote() {
           persistHistory={false}
           remotePersistence
           onResearchPendingSessionChange={setPendingResearchSessionId}
+          onConfirmDeleteSession={onDeleteSession}
           fileAccept=".pdf,.docx,.txt,.csv"
         />
       </div>
@@ -314,7 +312,6 @@ export default function RegulatoryIntelligencePage() {
   const [starredOnly, setStarredOnly] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
-  const [libraryOpen, setLibraryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const setSessions = useCallback((updater: SetStateAction<RegulatorySessionMeta[]>) => {
@@ -439,8 +436,6 @@ export default function RegulatoryIntelligencePage() {
         onSearchQueryChange={setSearchQuery}
         searchPanelOpen={searchPanelOpen}
         onSearchPanelOpenChange={setSearchPanelOpen}
-        libraryOpen={libraryOpen}
-        onLibraryOpenChange={setLibraryOpen}
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
         onClearAllData={onClearAllData}
@@ -458,6 +453,7 @@ export default function RegulatoryIntelligencePage() {
           enableDocumentContext
           persistHistory
           storageKey={chatStorageKey(activeSessionId)}
+          onConfirmDeleteSession={onDeleteSession}
           fileAccept=".pdf,.docx,.txt,.csv"
         />
       </div>

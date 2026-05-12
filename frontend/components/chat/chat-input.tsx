@@ -86,7 +86,7 @@ export function ChatInput({
   const deepResearchToggle =
     deepResearch != null ? (
       <div
-        className="flex items-center gap-1.5 shrink-0"
+        className="flex min-w-0 max-w-full items-center gap-1.5 shrink"
         title={
           deepResearch.checked
             ? "Deep research on: full multi-step graph and more sources."
@@ -99,11 +99,11 @@ export function ChatInput({
           onCheckedChange={deepResearch.onCheckedChange}
           disabled={isLoading}
           aria-describedby={`${deepResearchHintId}-desc`}
-          className="scale-90"
+          className="shrink-0 scale-90"
         />
         <Label
           htmlFor={deepResearchHintId}
-          className="text-xs font-medium cursor-pointer whitespace-nowrap text-muted-foreground leading-none"
+          className="min-w-0 truncate text-xs font-medium cursor-pointer text-muted-foreground leading-none"
         >
           Deep research
         </Label>
@@ -158,8 +158,8 @@ export function ChatInput({
             className="hidden"
             accept={fileAccept}
           />
-          <div className="flex items-center justify-between gap-2 px-2 pb-2 pt-1 border-t border-border/40">
-            <div className="flex items-center gap-0.5">
+          <div className="flex items-stretch gap-2 px-2 pb-2 pt-1 border-t border-border/40 overflow-hidden min-w-0">
+            <div className="flex items-center gap-0.5 shrink-0">
               <Button
                 type="button"
                 variant="ghost"
@@ -192,14 +192,16 @@ export function ChatInput({
                 <BookMarked className="h-5 w-5" />
               </Button>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-              {toolbarRight}
-              {deepResearchToggle}
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 sm:gap-2">
+              <div className="flex min-w-0 items-center justify-end gap-1.5 overflow-hidden">
+                {toolbarRight}
+                {deepResearchToggle}
+              </div>
               <Button
                 type="submit"
                 disabled={!message.trim() || isLoading}
                 size="icon"
-                className="h-10 w-10 rounded-full shrink-0"
+                className="h-10 w-10 shrink-0 rounded-full"
               >
                 {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
               </Button>

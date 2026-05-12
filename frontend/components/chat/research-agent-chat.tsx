@@ -5,14 +5,25 @@ import { MessageBubble } from "./message-bubble"
 import { ChatInput } from "./chat-input"
 import { QueryProgress, type QueryStep } from "./query-progress"
 import { Button } from "@/components/ui/button"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import type { Message } from "@/lib/types/chat-types"
-import { ChevronLeft, ChevronRight, Download, Trash2, Square, Share2, Star, User } from "lucide-react"
+import { ChevronLeft, ChevronRight, Download, Trash2, Square, Terminal, User } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
 import { chatAppendMessage, chatCompleteTurn, chatListMessages } from "@/lib/chat-persistence-api"
 import { normalizeChatCitations } from "@/lib/chat-citations"
 import { titleFromFirstUserMessage } from "@/lib/regulatory-chat-sessions"
+import { useBackendLogs } from "@/components/activity/logs-viewer"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
@@ -217,6 +228,8 @@ export interface ResearchAgentChatProps {
   remotePersistence?: boolean
   /** Fired when a research request starts (session id) or ends (null) for sidebar pending UI. */
   onResearchPendingSessionChange?: (sessionId: string | null) => void
+  /** When set with enterprise + sessionId, header delete confirms via sidebar API instead of clearing local state only. */
+  onConfirmDeleteSession?: (sessionId: string) => void | Promise<void>
 }
 
 function deserializeMessages(raw: string): Message[] {
@@ -242,7 +255,9 @@ export function ResearchAgentChat({
   onSessionActivity,
   remotePersistence = false,
   onResearchPendingSessionChange,
+  onConfirmDeleteSession,
 }: ResearchAgentChatProps) {
+  const backendLogs = useBackendLogs()
   const studyDesigner = useStudyDesignerOptional()
   const agentActions = studyDesigner?.agentActions ?? null
   const studyContext = studyDesigner?.studyContext ?? null
@@ -317,6 +332,7 @@ export function ResearchAgentChat({
   /** Which deep-research “thought” card is shown (new events auto-select latest). */
   const [deepResearchSlideIndex, setDeepResearchSlideIndex] = useState(0)
   const drTimelineLenRef = useRef(0)
+  const [sessionDeleteDialogOpen, setSessionDeleteDialogOpen] = useState(false)
   const abortResearchRef = useRef(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const progressStripRef = useRef<HTMLDivElement>(null)
@@ -340,7 +356,6 @@ export function ResearchAgentChat({
         setMessages(mapped)
       } catch (e) {
         if (ac.signal.aborted) return
-        console.error(e)
         toast.error("Could not load chat history", {
           description: e instanceof Error ? e.message : String(e),
         })
@@ -492,7 +507,6 @@ export function ResearchAgentChat({
           },
         })
       } catch (e) {
-        console.error("complete-turn failed", e)
         toast.error("Could not save reply to history", {
           description: e instanceof Error ? e.message : String(e),
         })
@@ -502,16 +516,10 @@ export function ResearchAgentChat({
     const lowerContent = content.toLowerCase()
 
     if (variant === "research") {
-      console.log("🔍 Checking for cross-component actions with multi-agent backend:", {
-        content,
-        lowerContent,
-        agentActions,
-      })
 
       // Handle trial selection commands
       if ((lowerContent.includes("select") || lowerContent.includes("pick") || lowerContent.includes("choose") || lowerContent.includes("find") || lowerContent.includes("filter") || lowerContent.includes("refine") || lowerContent.includes("narrow")) && 
         (lowerContent.includes("trial") || lowerContent.includes("trials"))) {
-      console.log("✅ Trial selection pattern matched!")
       
       // Determine if this is a refinement or new selection
       const isRefinement = lowerContent.includes("filter") || 
@@ -522,7 +530,6 @@ export function ResearchAgentChat({
                           lowerContent.includes("only") ||
                           (lowerContent.includes("to") && !lowerContent.includes("filter to"))
       
-      console.log("🔍 Selection type:", isRefinement ? "REFINEMENT" : "NEW SEARCH")
       
       // Extract the FULL criteria from the message for enhanced smart search
       // Remove only action words, preserve all search details
@@ -532,11 +539,7 @@ export function ResearchAgentChat({
         .replace(/\s+trials?\s*$/i, '')
         .trim()
       
-      console.log("🔍 Extracted FULL criteria for enhanced search:")
-      console.log("   Original query:", content)
-      console.log("   Cleaned criteria:", criteria)
       
-      console.log("🎯 Executing trial selection:", { criteria, isRefinement })
       
       // Execute the trial selection
       if (agentActions && agentActions.selectTrials) {
@@ -563,7 +566,6 @@ export function ResearchAgentChat({
         setIsLoading(false)
         return
       } else {
-        console.warn("⚠️ agentActions.selectTrials not available - falling back to WebSocket")
         // Fall through to WebSocket processing
       }
     }
@@ -580,7 +582,6 @@ export function ResearchAgentChat({
       if (agentActions && agentActions.runSimulation) {
         await agentActions.runSimulation(simulationType)
       } else {
-        console.warn("⚠️ agentActions.runSimulation not available")
       }
       
       const actionMessage: Message = {
@@ -615,7 +616,6 @@ export function ResearchAgentChat({
       if (agentActions && agentActions.generateCriteria) {
         await agentActions.generateCriteria(indication)
       } else {
-        console.warn("⚠️ agentActions.generateCriteria not available")
       }
       
       const actionMessage: Message = {
@@ -648,7 +648,6 @@ export function ResearchAgentChat({
       if (agentActions && agentActions.selectSites) {
         await agentActions.selectSites(criteria)
       } else {
-        console.warn("⚠️ agentActions.selectSites not available")
       }
       
       const actionMessage: Message = {
@@ -702,7 +701,6 @@ export function ResearchAgentChat({
         if (agentActions && agentActions.switchToTab) {
           agentActions.switchToTab(targetTab)
         } else {
-          console.warn("⚠️ agentActions.switchToTab not available")
         }
         
         const actionMessage: Message = {
@@ -747,7 +745,6 @@ export function ResearchAgentChat({
             { id: meta.document_id, filename: meta.filename, charCount: meta.char_count },
           ])
         } catch (e) {
-          console.error(e)
           toast.error(e instanceof Error ? e.message : "Document upload failed")
           setIsLoading(false)
           return
@@ -841,19 +838,16 @@ export function ResearchAgentChat({
       // Try to connect to Multi-Agent Backend WebSocket (port 8001)
       const wsUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL || "ws://127.0.0.1:8001/ws"
       const clientId = `client-${Date.now()}`
-      console.log("🤖 Connecting to Multi-Agent Backend:", wsUrl)
       const ws = new WebSocket(`${wsUrl}/${clientId}`)
       wsRef.current = ws
 
       ws.onopen = () => {
-        console.log("🔌 WebSocket connected to Multi-Agent Backend")
         setDeepResearchTimeline([])
         drTimelineLenRef.current = 0
 
         // Start keep-alive ping every 30 seconds
         const pingInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
-            console.log("📡 Sending keep-alive ping")
             ws.send(JSON.stringify({ type: "ping" }))
           }
         }, 30000)
@@ -882,18 +876,15 @@ export function ResearchAgentChat({
           },
         }
         
-        console.log("📤 Sending query to backend:", content)
         ws.send(JSON.stringify(queryMessage))
       }
       
       ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data)
-          console.log("📥 Received WebSocket message:", data.type)
           
           // Handle pong responses to keep-alive pings
           if (data.type === "pong") {
-            console.log("🏓 Received pong")
             return
           }
 
@@ -1056,11 +1047,9 @@ export function ResearchAgentChat({
           
           // Handle query_started with graph plan
           if (data.type === "query_started") {
-            console.log("🚀 Query started, parsing graph plan...")
             const graphPlan = data.data?.graph_plan
             const steps = graphPlanToQuerySteps(graphPlan)
             if (steps.length > 0) {
-              console.log("📊 Created query steps:", steps)
               setQuerySteps(steps)
             }
             return
@@ -1072,7 +1061,6 @@ export function ResearchAgentChat({
             const nodeId = nodeData?.node_id
             const status = nodeData?.status
             
-            console.log("🔄 Node progress update:", nodeId, status)
             
             if (nodeId) {
               if (status === "started" || status === "in_progress") {
@@ -1121,7 +1109,6 @@ export function ResearchAgentChat({
             
             // Check if the response suggests selecting trials
             if ((lowerAnswer.includes("found") || lowerAnswer.includes("identified")) && lowerAnswer.includes("trial")) {
-              console.log("🎯 Multi-agent response suggests trial selection")
               
               // Use the FULL original query for enhanced smart search
               // Remove action words like "pick", "select", "find", "show", "get"
@@ -1131,12 +1118,9 @@ export function ResearchAgentChat({
                 .replace(/\s+trials?\s*$/i, '')
                 .trim()
               
-              console.log("🔍 Extracted full criteria from query:", criteria)
-              console.log("   Original query:", content)
               
               // Trigger trial selection if we have criteria and context is available
               if (criteria && agentActions && agentActions.selectTrials) {
-                console.log("🚀 Triggering trial selection with full query:", criteria)
                 await agentActions.selectTrials(criteria, false)
               }
             }
@@ -1146,7 +1130,6 @@ export function ResearchAgentChat({
             const executionResults = data.data?.results || data.data?.execution_results
             
             if (graphPlan && graphPlan.nodes && executionResults && agentActions) {
-              console.log("📝 Checking for protocol generation in graph plan...")
               
               // Map of section types to protocol section IDs in context
               const sectionMapping: {[key: string]: string} = {
@@ -1169,7 +1152,6 @@ export function ResearchAgentChat({
               // Check each node in the graph plan
               for (const node of graphPlan.nodes) {
                 if (node.type === 'protocol_generate' || node.type === 'protocol_full') {
-                  console.log(`🎯 Found protocol generation node: ${node.id}`)
                   
                   // Get the execution results for this node
                   const nodeResults = executionResults[node.id]
@@ -1183,10 +1165,8 @@ export function ResearchAgentChat({
                       const sectionId = sectionMapping[sectionType]
                       const content = result?.content
                       
-                      console.log(`🔍 Protocol generate result:`, { sectionType, sectionId, hasContent: !!content, resultKeys: result ? Object.keys(result) : [] })
                       
                       if (sectionId && content) {
-                        console.log(`✅ Updating ${sectionId} with generated content (${content.length} chars)`)
                         await agentActions.updateProtocolSection?.(sectionId, content)
                         
                         // Switch to the appropriate tab
@@ -1214,14 +1194,11 @@ export function ResearchAgentChat({
                       const result = Array.isArray(nodeResults) ? nodeResults[0] : nodeResults
                       const sections = result?.protocol_sections
                       
-                      console.log(`🔍 Protocol full result:`, { hasSections: !!sections, sectionKeys: sections ? Object.keys(sections) : [] })
                       
                       if (sections) {
-                        console.log(`✅ Updating all protocol sections from full protocol generation`)
                         for (const [sectionType, content] of Object.entries(sections)) {
                           const sectionId = sectionMapping[sectionType]
                           if (sectionId && typeof content === 'string') {
-                            console.log(`  ✅ Updating ${sectionId} (${content.length} chars)`)
                             await agentActions.updateProtocolSection?.(sectionId, content)
                           }
                         }
@@ -1234,7 +1211,6 @@ export function ResearchAgentChat({
                 
                 // NEW: Check for synthesis nodes that generate protocol content
                 if (node.type === 'synthesize' || node.type === 'synthesis') {
-                  console.log(`🎯 Found synthesis node: ${node.id} - ${node.description}`)
                   
                   // Check if this is a protocol-related synthesis based on node ID or description
                   const nodeId = node.id?.toLowerCase() || ''
@@ -1245,7 +1221,6 @@ export function ResearchAgentChat({
                     const nodeResults = executionResults[node.id]
                     
                     if (nodeResults && synthesis?.answer) {
-                      console.log(`✅ Detected rationale synthesis, updating rationale section`)
                       await agentActions.updateProtocolSection?.('rationale', synthesis.answer)
                       agentActions.switchToTab?.('rationale')
                     }
@@ -1255,7 +1230,6 @@ export function ResearchAgentChat({
                   if (nodeId.includes('background') || nodeDesc.includes('background')) {
                     const nodeResults = executionResults[node.id]
                     if (nodeResults && synthesis?.answer) {
-                      console.log(`✅ Detected background synthesis, updating background section`)
                       await agentActions.updateProtocolSection?.('background', synthesis.answer)
                       agentActions.switchToTab?.('rationale')
                     }
@@ -1264,7 +1238,6 @@ export function ResearchAgentChat({
                   if (nodeId.includes('objective') || nodeDesc.includes('objective')) {
                     const nodeResults = executionResults[node.id]
                     if (nodeResults && synthesis?.answer) {
-                      console.log(`✅ Detected objectives synthesis, updating objectives section`)
                       await agentActions.updateProtocolSection?.('primary_objectives', synthesis.answer)
                       agentActions.switchToTab?.('objectives')
                     }
@@ -1313,7 +1286,6 @@ export function ResearchAgentChat({
           } else if (data.type === "node_progress") {
             // Handle real-time agent progress updates
             const nodeData = data.data
-            console.log("🤖 Agent progress:", nodeData?.node_id, nodeData?.status)
             
             // Optionally add progress messages to chat
             if (nodeData?.status === "completed" && nodeData?.result_summary) {
@@ -1329,20 +1301,19 @@ export function ResearchAgentChat({
             }
           } else if (data.type === "node_started" || data.type === "node_completed") {
             // Handle progress updates
-            console.log("📊 Agent node update:", data.type, data.data?.node_id || data.data?.message)
           } else if (data.type === "error") {
             throw new Error(data.message || "Multi-agent processing error")
           }
-        } catch (error) {
-          console.error("Error parsing WebSocket message:", error)
+        } catch {
+          toast.error("Chat connection error", {
+            description: "The research stream sent a message that could not be processed.",
+          })
           setIsLoading(false)
           ws.close()
         }
       }
       
-      ws.onerror = (error) => {
-        console.error("WebSocket error:", error)
-      }
+      ws.onerror = () => {}
 
       ws.addEventListener("close", () => {
         const ping = (ws as { pingInterval?: ReturnType<typeof setInterval> }).pingInterval
@@ -1353,7 +1324,6 @@ export function ResearchAgentChat({
         }
       })
     } catch (error) {
-      console.error("Error setting up WebSocket:", error)
       setIsLoading(false)
       toast.error("Could not open WebSocket", {
         description: error instanceof Error ? error.message : String(error),
@@ -1434,6 +1404,26 @@ export function ResearchAgentChat({
     }
   }
 
+  const handleTrashButtonClick = () => {
+    if (onConfirmDeleteSession && sessionId) {
+      setSessionDeleteDialogOpen(true)
+      return
+    }
+    handleClearChat()
+  }
+
+  const handleConfirmDeleteSession = async () => {
+    if (!sessionId || !onConfirmDeleteSession) return
+    try {
+      await onConfirmDeleteSession(sessionId)
+      setSessionDeleteDialogOpen(false)
+    } catch (e) {
+      toast.error("Could not delete chat", {
+        description: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
   const handleExportChat = () => {
     const chatText = messages
       .map(
@@ -1468,15 +1458,24 @@ export function ResearchAgentChat({
               Preview
             </Badge>
           </div>
-          <div className="flex items-center gap-0.5">
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full text-muted-foreground" type="button" disabled>
-              <Star className="h-4 w-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full text-muted-foreground" type="button" disabled>
-              <Share2 className="h-4 w-4" />
-            </Button>
+          <div className="flex items-center gap-0.5 relative">
             <Button variant="ghost" size="icon" onClick={handleExportChat} className="h-9 w-9 rounded-full" title="Export chat">
               <Download className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => backendLogs.open()}
+              className="h-9 w-9 rounded-full relative"
+              title="Backend logs"
+              type="button"
+            >
+              <Terminal className="h-4 w-4" />
+              {backendLogs.errorCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-0.5 text-[10px] font-medium text-destructive-foreground">
+                  {backendLogs.errorCount > 9 ? "9+" : backendLogs.errorCount}
+                </span>
+              )}
             </Button>
             {isLoading && (
               <Button variant="outline" size="sm" onClick={handleStopGeneration} className="h-8 gap-1 rounded-full ml-1">
@@ -1484,16 +1483,13 @@ export function ResearchAgentChat({
                 Stop
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={handleClearChat} className="h-9 w-9 rounded-full" title="Clear chat">
-              <Trash2 className="h-4 w-4" />
-            </Button>
             <div className="ml-1 flex h-9 w-9 items-center justify-center rounded-full bg-muted border border-border/50">
               <User className="h-4 w-4 text-muted-foreground" />
             </div>
           </div>
         </header>
       ) : (
-        <div className="flex items-center justify-between px-4 sm:px-6 py-3 border-b border-border/40 flex-shrink-0 bg-card/50">
+        <div className="flex items-center justify-end px-4 sm:px-6 py-3 border-b border-border/40 flex-shrink-0 bg-card/50">
           <div className="flex items-center gap-2 flex-wrap">
             {isLoading && (
               <Button variant="outline" size="sm" onClick={handleStopGeneration} className="h-8 gap-1">
@@ -1504,7 +1500,22 @@ export function ResearchAgentChat({
             <Button variant="ghost" size="icon" onClick={handleExportChat} className="h-8 w-8">
               <Download className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={handleClearChat} className="h-8 w-8">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => backendLogs.open()}
+              className="h-8 w-8 relative"
+              title="Backend logs"
+              type="button"
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              {backendLogs.errorCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[9px] font-medium text-destructive-foreground">
+                  {backendLogs.errorCount > 9 ? "9+" : backendLogs.errorCount}
+                </span>
+              )}
+            </Button>
+            <Button variant="ghost" size="icon" onClick={handleTrashButtonClick} className="h-8 w-8" title={onConfirmDeleteSession && sessionId ? "Delete chat" : "Clear chat"}>
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -1843,6 +1854,26 @@ export function ResearchAgentChat({
           />
         </div>
       </div>
+
+      <AlertDialog open={sessionDeleteDialogOpen} onOpenChange={setSessionDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this chat?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the session and its history. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void handleConfirmDeleteSession()}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {isEnterprise && (
         <p className="text-center text-[11px] text-muted-foreground/80 pb-3 px-4 shrink-0">

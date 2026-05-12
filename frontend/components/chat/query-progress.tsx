@@ -16,7 +16,7 @@ interface QueryProgressProps {
 
 export function QueryProgress({ steps, currentStep }: QueryProgressProps) {
   return (
-    <div className="bg-muted/50 border border-border/40 rounded-lg p-4 max-w-2xl space-y-3">
+    <div className="min-w-0 max-w-full bg-muted/50 border border-border/40 rounded-lg p-4 sm:max-w-2xl space-y-3">
       <div className="flex items-center gap-2 mb-4">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
         <span className="text-sm font-medium text-foreground">Processing Query</span>
@@ -48,24 +48,30 @@ export function QueryProgress({ steps, currentStep }: QueryProgressProps) {
               </div>
               
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm font-medium ${
-                    isCompleted ? 'text-muted-foreground' : 
-                    isCurrentStep ? 'text-foreground' : 
-                    'text-muted-foreground/60'
-                  }`}>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={`min-w-0 truncate text-sm font-medium ${
+                      isCompleted
+                        ? "text-muted-foreground"
+                        : isCurrentStep
+                          ? "text-foreground"
+                          : "text-muted-foreground/60"
+                    }`}
+                  >
                     {index + 1}. {step.name}
                   </span>
                   {step.agent && (
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                    <span className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
                       {step.agent}
                     </span>
                   )}
                 </div>
                 {step.description && (
-                  <p className={`text-xs mt-0.5 ${
-                    isCurrentStep ? 'text-muted-foreground' : 'text-muted-foreground/60'
-                  }`}>
+                  <p
+                    className={`text-xs mt-0.5 line-clamp-3 break-words ${
+                      isCurrentStep ? "text-muted-foreground" : "text-muted-foreground/60"
+                    }`}
+                  >
                     {step.description}
                   </p>
                 )}

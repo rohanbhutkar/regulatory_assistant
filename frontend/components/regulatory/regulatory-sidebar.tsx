@@ -22,20 +22,10 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
 import type { RegulatorySessionMeta } from "@/lib/regulatory-chat-sessions"
 import { cn } from "@/lib/utils"
 import {
-  BookOpen,
   ChevronDown,
-  ChevronRight,
-  Library,
   Loader2,
   MessageSquarePlus,
   MoreHorizontal,
@@ -62,8 +52,6 @@ interface RegulatorySidebarProps {
   onSearchQueryChange: (value: string) => void
   searchPanelOpen: boolean
   onSearchPanelOpenChange: (value: boolean) => void
-  libraryOpen: boolean
-  onLibraryOpenChange: (value: boolean) => void
   settingsOpen: boolean
   onSettingsOpenChange: (value: boolean) => void
   onClearAllData: () => void
@@ -87,8 +75,6 @@ export function RegulatorySidebar({
   onSearchQueryChange,
   searchPanelOpen,
   onSearchPanelOpenChange,
-  libraryOpen,
-  onLibraryOpenChange,
   settingsOpen,
   onSettingsOpenChange,
   onClearAllData,
@@ -205,15 +191,6 @@ export function RegulatorySidebar({
             <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{starredCount}</span>
           )}
         </Button>
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-3 h-10 px-3 rounded-xl text-sm hover:bg-background/80"
-          type="button"
-          onClick={() => onLibraryOpenChange(true)}
-        >
-          <Library className="h-4 w-4 text-muted-foreground" />
-          Library
-        </Button>
       </div>
 
       <div className="flex flex-1 flex-col min-h-0 border-t border-border/30">
@@ -233,7 +210,7 @@ export function RegulatorySidebar({
               <div key={s.id} className="relative group/item">
                 <div
                   className={cn(
-                    "w-full flex items-center gap-0.5 rounded-xl pl-2 pr-1 py-1.5 text-left text-sm transition-colors",
+                    "w-full flex min-w-0 items-center gap-0.5 overflow-hidden rounded-xl pl-2 pr-1 py-1.5 text-left text-sm transition-colors",
                     s.id === activeSessionId
                       ? "bg-[#d3e3fd]/80 dark:bg-primary/20 text-foreground"
                       : "hover:bg-background/80",
@@ -241,8 +218,9 @@ export function RegulatorySidebar({
                 >
                   <button
                     type="button"
-                    className="flex-1 min-w-0 truncate font-medium text-left py-1 pl-0 pr-1 rounded-lg"
+                    className="min-w-0 flex-1 truncate py-1 pl-0 pr-1 text-left font-medium rounded-lg"
                     onClick={() => onSelectSession(s.id)}
+                    title={s.title}
                   >
                     {s.title}
                   </button>
@@ -390,64 +368,6 @@ export function RegulatorySidebar({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Sheet open={libraryOpen} onOpenChange={onLibraryOpenChange}>
-        <SheetContent side="right" className="w-[min(100vw,360px)] sm:max-w-[360px]">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <BookOpen className="h-5 w-5" />
-              Library
-            </SheetTitle>
-            <SheetDescription>
-              All saved regulatory chats on this browser. Open one to continue, or star important threads from the sidebar.
-            </SheetDescription>
-          </SheetHeader>
-          <ScrollArea className="mt-6 h-[calc(100vh-12rem)]">
-            <div className="space-y-1 pr-3">
-              {[...sessionList]
-                .sort((a, b) => b.updatedAt - a.updatedAt)
-                .map((s) => (
-                  <div
-                    key={s.id}
-                    className={cn(
-                      "flex items-start gap-1 rounded-xl border border-transparent px-2 py-2 text-sm transition-colors hover:bg-muted/60 hover:border-border/50 group/librow",
-                      s.id === activeSessionId && "bg-muted/50 border-border/40",
-                    )}
-                  >
-                    <button
-                      type="button"
-                      className="flex-1 min-w-0 text-left px-1 py-1 rounded-lg"
-                      onClick={() => {
-                        onSelectSession(s.id)
-                        onLibraryOpenChange(false)
-                      }}
-                    >
-                      <div className="font-medium truncate">{s.title}</div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">
-                        {new Date(s.updatedAt).toLocaleString()}
-                        {s.starred && (
-                          <span className="ml-2 inline-flex items-center gap-0.5 text-amber-600">
-                            <Star className="h-3 w-3 fill-amber-400" />
-                            Starred
-                          </span>
-                        )}
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      className="shrink-0 p-2 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-100 sm:opacity-60 sm:group-hover/librow:opacity-100 focus-visible:opacity-100"
-                      aria-label={`Delete “${s.title}”`}
-                      title="Delete chat"
-                      onClick={() => setDeleteId(s.id)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-            </div>
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
 
       <Dialog open={settingsOpen} onOpenChange={onSettingsOpenChange}>
         <DialogContent className="sm:max-w-md">
