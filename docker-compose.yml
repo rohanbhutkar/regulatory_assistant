@@ -56,11 +56,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Baked at `docker compose build`; must be reachable from the host browser (not the backend service name).
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:8001
+        NEXT_PUBLIC_AGENT_WS_URL: ws://127.0.0.1:8001/ws
+        NEXT_PUBLIC_CHAT_PERSISTENCE: "true"
     container_name: study_designer_frontend
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8001
       - NODE_ENV=production
     depends_on:
       backend:

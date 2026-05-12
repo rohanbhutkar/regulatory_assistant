@@ -44,29 +44,37 @@ def _normalize_async_url(url: str) -> str:
     return url
 
 
-def _append_asyncpg_ssl_if_rds(url: str) -> str:
-    """RDS requires TLS. asyncpg (via SQLAlchemy URL query) needs sslmode=require, not ssl=true.
-
-    ``ssl=true`` is interpreted as an invalid sslmode token and raises ClientConfigurationError.
-    """
+def _chat_db_ssl_disabled() -> bool:
     raw = (os.getenv("CHAT_DB_SSL") or "").strip().lower()
-    if raw in ("0", "false", "no", "off"):
-        return url
-    if ".rds.amazonaws.com" not in url:
-        return url
+    return raw in ("0", "false", "no", "off")
+
+
+def _strip_url_query_keys(url: str, keys: frozenset[str]) -> str:
+    """Remove query pairs whose key (case-insensitive) is in keys."""
+    lk = {k.lower() for k in keys}
     parsed = urlparse(url)
-    pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    keys_lower = {k.lower() for k, _ in pairs}
-    if "sslmode" in keys_lower:
-        return url
-    # Remove mistaken ``ssl=`` pairs (e.g. legacy ssl=true); they are not valid asyncpg sslmodes.
-    pairs = [(k, v) for k, v in pairs if k.lower() != "ssl"]
-    pairs.append(("sslmode", "require"))
+    pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k.lower() not in lk]
     new_query = urlencode(pairs)
-    rebuilt = urlunparse(
+    return urlunparse(
         (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
     )
-    return rebuilt
+
+
+def _prepare_asyncpg_engine_url(url: str) -> tuple[str, dict]:
+    """Return (url_for_engine, connect_args).
+
+    SQLAlchemy passes URL *query* keys as keyword args to ``asyncpg.connect()``; that API accepts
+    ``ssl`` but not ``sslmode``, so ``?sslmode=require`` causes TypeError. For RDS we strip
+    ``ssl`` / ``sslmode`` from the URL and pass ``connect_args={"ssl": "require"}`` instead.
+    """
+    u = _normalize_async_url(url)
+    connect_args: dict = {}
+    if ".rds.amazonaws.com" not in u:
+        return u, connect_args
+    if _chat_db_ssl_disabled():
+        return _strip_url_query_keys(u, frozenset({"ssl", "sslmode"})), connect_args
+    connect_args["ssl"] = "require"
+    return _strip_url_query_keys(u, frozenset({"ssl", "sslmode"})), connect_args
 
 
 def chat_db_pool_ready() -> bool:
@@ -83,9 +91,10 @@ async def init_chat_database() -> None:
     url = database_url()
     if not url:
         return
-    nurl = _append_asyncpg_ssl_if_rds(_normalize_async_url(url))
+    nurl, connect_args = _prepare_asyncpg_engine_url(url)
     _engine = create_async_engine(
         nurl,
+        connect_args=connect_args,
         pool_pre_ping=True,
         pool_size=int(os.getenv("CHAT_DB_POOL_SIZE", "5")),
         max_overflow=int(os.getenv("CHAT_DB_MAX_OVERFLOW", "5")),

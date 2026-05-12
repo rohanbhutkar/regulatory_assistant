@@ -11,6 +11,10 @@ on:
         description: Baked NEXT_PUBLIC_AGENT_WS_URL (e.g. wss://regulatory-assistant.lotorlab.com/ws)
         required: false
         default: "wss://regulatory-assistant.lotorlab.com/ws"
+      next_public_chat_persistence:
+        description: Baked NEXT_PUBLIC_CHAT_PERSISTENCE (must be true for Postgres-backed regulatory chat UI)
+        required: false
+        default: "true"
 
 permissions:
   id-token: write # This is required for requesting the JWT
@@ -54,11 +58,13 @@ jobs:
           IMAGE_PREFIX: ghcr.io/${{ github.repository }}
           NEXT_PUBLIC_API_URL: ${{ inputs.next_public_api_url }}
           NEXT_PUBLIC_AGENT_WS_URL: ${{ inputs.next_public_agent_ws_url }}
+          NEXT_PUBLIC_CHAT_PERSISTENCE: ${{ inputs.next_public_chat_persistence }}
         run: |
           PREFIX=$(echo "$IMAGE_PREFIX" | tr '[:upper:]' '[:lower:]')
           docker build \
             --build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}" \
             --build-arg "NEXT_PUBLIC_AGENT_WS_URL=${NEXT_PUBLIC_AGENT_WS_URL}" \
+            --build-arg "NEXT_PUBLIC_CHAT_PERSISTENCE=${NEXT_PUBLIC_CHAT_PERSISTENCE}" \
             -t "${PREFIX}/frontend:latest" \
             -f frontend/Dockerfile \
             frontend
