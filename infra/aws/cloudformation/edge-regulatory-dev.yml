@@ -177,7 +177,7 @@ Resources:
             CustomOriginConfig:
               HTTPSPort: 443
               OriginProtocolPolicy: https-only
-              OriginReadTimeout: 180
+              OriginReadTimeout: 60
               OriginKeepaliveTimeout: 60
               OriginSSLProtocols:
                 - TLSv1.2
