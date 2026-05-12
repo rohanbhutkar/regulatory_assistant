@@ -4,7 +4,6 @@ Asset AI API Routes - Module 7: Agentic AI ("Talk to your Asset")
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
-from agents.asset_strategy_agent import asset_strategy_agent
 from agents.llm_agent import llm_agent
 from agents.fda_labels_agent import fda_labels_agent
 from agents.fierce_pharma_agent import google_search_agent
@@ -21,6 +20,25 @@ from models.asset_strategy_models import (
 import logging
 import json
 import re
+
+# AssetStrategyAgent subclasses DynamicReasoningEngine; defer import so main_complete
+# can finish loading and uvicorn can bind before the full agent graph is imported.
+_impl_asset_strategy_agent = None
+
+
+class _LazyAssetStrategyAgent:
+    __slots__ = ()
+
+    def __getattr__(self, name: str):
+        global _impl_asset_strategy_agent
+        if _impl_asset_strategy_agent is None:
+            from agents.asset_strategy_agent import asset_strategy_agent as _real
+
+            _impl_asset_strategy_agent = _real
+        return getattr(_impl_asset_strategy_agent, name)
+
+
+asset_strategy_agent = _LazyAssetStrategyAgent()
 
 logger = logging.getLogger(__name__)
 

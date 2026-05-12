@@ -26,10 +26,8 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-# Import the DynamicReasoningEngine
-from graph.dynamic_reasoning_engine import DynamicReasoningEngine
-
-# Import existing API routes
+# Import existing API routes (do not import DynamicReasoningEngine here — that module
+# pulls the full agent graph and delays uvicorn bind; see _blocking_post_essential_startup.)
 from api import persona_routes, asset_routes, trial_routes, commercial_routes, data_routes, protocol_routes, analysis_routes, site_map_routes, cpp_routes, fmv_routes, insights_routes
 from api import asset_strategy_routes, pricing_routes, hta_routes, financial_routes, scenario_routes, data_catalog_routes, asset_ai_routes, reporting_routes, payer_data_routes, regulatory_routes
 from services.regulatory_document_store import regulatory_document_store
@@ -101,6 +99,8 @@ def _blocking_post_essential_startup() -> None:
     logger.info("✅ Log Capture enabled - backend logs will be sent to frontend")
 
     logger.info("🤖 Initializing DynamicReasoningEngine...")
+    from graph.dynamic_reasoning_engine import DynamicReasoningEngine
+
     reasoning_engine = DynamicReasoningEngine()
     active_agents = [k for k, v in reasoning_engine.available_agents.items() if v is not None]
     logger.info(f"✅ DynamicReasoningEngine initialized with {len(active_agents)} active agents")

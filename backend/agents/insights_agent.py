@@ -9,13 +9,32 @@ import pandas as pd
 from utils.logger import log_error
 from utils.cache import cache_manager
 from agents.llm_agent import llm_agent
-from agents.claims_data_agent import claims_data_agent
-from agents.fda_labels_agent import fda_labels_agent
-from agents.trialtrove_agent import trialtrove_agent
-from agents.site_trove_agent import site_trove_agent
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Heavy agents: defer import until first get_insights_agent() so main_complete can load
+# and uvicorn can bind before multi-GB pandas frames enter RAM.
+claims_data_agent = None  # type: ignore[assignment]
+fda_labels_agent = None  # type: ignore[assignment]
+trialtrove_agent = None  # type: ignore[assignment]
+site_trove_agent = None  # type: ignore[assignment]
+
+
+def _ensure_heavy_insight_deps() -> None:
+    global claims_data_agent, fda_labels_agent, trialtrove_agent, site_trove_agent
+    if claims_data_agent is not None:
+        return
+    from agents.claims_data_agent import claims_data_agent as _cda
+    from agents.fda_labels_agent import fda_labels_agent as _fda
+    from agents.trialtrove_agent import trialtrove_agent as _tta
+    from agents.site_trove_agent import site_trove_agent as _sta
+
+    claims_data_agent = _cda
+    fda_labels_agent = _fda
+    trialtrove_agent = _tta
+    site_trove_agent = _sta
+
 
 class InsightsAgent:
     """Agent for generating analytical insights based on reference trials"""
@@ -2628,6 +2647,7 @@ insights_agent = None
 def get_insights_agent(data_loader):
     """Get or create insights agent singleton"""
     global insights_agent
+    _ensure_heavy_insight_deps()
     if insights_agent is None:
         insights_agent = InsightsAgent(data_loader)
     return insights_agent

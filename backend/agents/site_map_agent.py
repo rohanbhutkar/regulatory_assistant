@@ -12,9 +12,9 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 from agents.llm_agent import llm_agent
-from agents.trialtrove_agent import TrialTroveAgent
-from agents.site_trove_agent import SiteTroveAgent
-from agents.claims_data_agent import ClaimsDataAgent
+from agents.trialtrove_agent import trialtrove_agent
+from agents.site_trove_agent import site_trove_agent
+from agents.claims_data_agent import claims_data_agent
 from models.schemas import BaseModel, Field
 from utils.logger import logger, log_error
 from utils.cache import cache_manager
@@ -132,9 +132,11 @@ class SiteMapAgent:
     """Agent for creating interactive site maps with population overlays"""
     
     def __init__(self):
-        self.trial_trove_agent = TrialTroveAgent()
-        self.site_trove_agent = SiteTroveAgent()
-        self.claims_data_agent = ClaimsDataAgent()
+        # Use module singletons — constructing new SiteTroveAgent/ClaimsDataAgent duplicates
+        # multi-GB in-memory loads (see dynamic_reasoning_engine agent wiring).
+        self.trial_trove_agent = trialtrove_agent
+        self.site_trove_agent = site_trove_agent
+        self.claims_data_agent = claims_data_agent
         self.llm_agent = llm_agent
         self.cache_manager = cache_manager
     
