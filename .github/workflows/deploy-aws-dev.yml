@@ -179,6 +179,7 @@ jobs:
           docker build \
             --build-arg "NEXT_PUBLIC_API_URL=https://${DEV_DOMAIN_NAME}" \
             --build-arg "NEXT_PUBLIC_AGENT_WS_URL=wss://${DEV_DOMAIN_NAME}/ws" \
+            --build-arg "NEXT_PUBLIC_CHAT_PERSISTENCE=true" \
             -t "$FRONTEND_IMAGE_URI" \
             -f frontend/Dockerfile \
             frontend

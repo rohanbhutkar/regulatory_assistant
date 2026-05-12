@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -44,6 +43,21 @@ def _normalize_async_url(url: str) -> str:
     return url
 
 
+def _append_asyncpg_ssl_if_rds(url: str) -> str:
+    """RDS often requires TLS; asyncpg accepts ssl=true in the URL query string."""
+    raw = (os.getenv("CHAT_DB_SSL") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return url
+    if ".rds.amazonaws.com" not in url:
+        return url
+    q = url.split("?", 1)
+    query = q[1] if len(q) > 1 else ""
+    if "ssl=" in query or "sslmode=" in query:
+        return url
+    sep = "&" if query else ""
+    return f"{q[0]}?{query}{sep}ssl=true" if query else f"{url}?ssl=true"
+
+
 def chat_db_pool_ready() -> bool:
     return _session_factory is not None
 
@@ -58,7 +72,7 @@ async def init_chat_database() -> None:
     url = database_url()
     if not url:
         return
-    nurl = _normalize_async_url(url)
+    nurl = _append_asyncpg_ssl_if_rds(_normalize_async_url(url))
     _engine = create_async_engine(
         nurl,
         pool_pre_ping=True,

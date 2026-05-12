@@ -21,8 +21,10 @@ COPY . .
 # Baked at build time for standalone client bundle (override in CI / docker build --build-arg)
 ARG NEXT_PUBLIC_API_URL=https://regulatory-assistant.lotorlab.com
 ARG NEXT_PUBLIC_AGENT_WS_URL=wss://regulatory-assistant.lotorlab.com/ws
+ARG NEXT_PUBLIC_CHAT_PERSISTENCE=false
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_AGENT_WS_URL=$NEXT_PUBLIC_AGENT_WS_URL
+ENV NEXT_PUBLIC_CHAT_PERSISTENCE=$NEXT_PUBLIC_CHAT_PERSISTENCE
 
 # Build the application
 RUN npm run build

@@ -37,7 +37,13 @@ def _sync_url() -> str:
     ).strip()
     if not url:
         raise RuntimeError("Set DATABASE_URL_SYNC or DATABASE_URL for alembic migrations.")
-    return re.sub(r"^postgresql\+asyncpg", "postgresql", url, count=1)
+    url = re.sub(r"^postgresql\+asyncpg", "postgresql", url, count=1)
+    # psycopg2 / RDS: require TLS unless CHAT_DB_SSL disables it
+    raw = (os.getenv("CHAT_DB_SSL") or "").strip().lower()
+    if raw not in ("0", "false", "no", "off") and ".rds.amazonaws.com" in url:
+        if "sslmode=" not in url.lower():
+            url = f"{url}&sslmode=require" if "?" in url else f"{url}?sslmode=require"
+    return url
 
 
 def run_migrations_offline() -> None:
