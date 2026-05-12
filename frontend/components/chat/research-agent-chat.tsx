@@ -809,10 +809,10 @@ export function ResearchAgentChat({
           },
         }
         setMessages((prev) => [...prev, aiMessage])
-        void persistRemoteAssistant(userPersistId, aiMessage)
         setIsLoading(false)
         setQuerySteps([])
         setCurrentStep(undefined)
+        void persistRemoteAssistant(userPersistId, aiMessage)
     }
 
     const tryHttpRecovery = async () => {
@@ -1279,19 +1279,19 @@ export function ResearchAgentChat({
             }
             
             setMessages((prev) => [...prev, aiMessage])
-            void persistRemoteAssistant(userPersistId, aiMessage)
             setIsLoading(false)
-            
+
             // Clear progress steps
             setQuerySteps([])
             setCurrentStep(undefined)
-            
+
             // Clean up ping interval
             if ((ws as any).pingInterval) {
               clearInterval((ws as any).pingInterval)
             }
-            
+
             ws.close()
+            void persistRemoteAssistant(userPersistId, aiMessage)
           } else if (data.type === "node_progress") {
             // Handle real-time agent progress updates
             const nodeData = data.data
