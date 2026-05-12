@@ -36,6 +36,7 @@ import {
   ChevronDown,
   ChevronRight,
   Library,
+  Loader2,
   MessageSquarePlus,
   MoreHorizontal,
   Search,
@@ -67,6 +68,8 @@ interface RegulatorySidebarProps {
   onSettingsOpenChange: (value: boolean) => void
   onClearAllData: () => void
   className?: string
+  /** When set, show a small loading indicator on that session row (research in flight). */
+  pendingResearchSessionId?: string | null
 }
 
 export function RegulatorySidebar({
@@ -90,6 +93,7 @@ export function RegulatorySidebar({
   onSettingsOpenChange,
   onClearAllData,
   className,
+  pendingResearchSessionId,
 }: RegulatorySidebarProps) {
   const sessionList = sessions ?? []
   const visibleList = visibleSessions ?? []
@@ -242,6 +246,12 @@ export function RegulatorySidebar({
                   >
                     {s.title}
                   </button>
+                  {pendingResearchSessionId === s.id && (
+                    <Loader2
+                      className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+                      aria-label="Reply in progress"
+                    />
+                  )}
                   <button
                     type="button"
                     className="shrink-0 p-1.5 rounded-md hover:bg-background/60"

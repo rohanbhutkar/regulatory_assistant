@@ -6,8 +6,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +41,13 @@ def _default_cache_dir() -> Path:
     if settings.EMA_JSON_CACHE_DIR.strip():
         return Path(settings.EMA_JSON_CACHE_DIR)
     return Path(__file__).resolve().parent.parent / ".cache" / "ema_json"
+
+
+def _runtime_cache_dir() -> Path:
+    cache_root = os.getenv("XDG_CACHE_HOME", "").strip()
+    if cache_root:
+        return Path(cache_root) / "regulatory_bot" / "ema_json"
+    return Path(tempfile.gettempdir()) / "regulatory_bot" / "ema_json"
 
 
 def _norm(s: Any) -> str:
@@ -331,10 +340,38 @@ class EmaJsonIndex:
     def _cache_path(self, feed_key: str) -> Path:
         return self._cache_dir / FEED_FILES[feed_key]
 
+    def _ensure_cache_dir(self) -> None:
+        candidates = [self._cache_dir, _runtime_cache_dir()]
+        seen: set[Path] = set()
+        last_err: Optional[BaseException] = None
+
+        for candidate in candidates:
+            try:
+                resolved = candidate.expanduser()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                resolved.mkdir(parents=True, exist_ok=True)
+                probe = resolved / ".write_test"
+                probe.write_text("", encoding="utf-8")
+                probe.unlink(missing_ok=True)
+                if resolved != self._cache_dir:
+                    logger.warning(
+                        "EMA JSON cache directory %s was not writable; using %s",
+                        self._cache_dir,
+                        resolved,
+                    )
+                    self._cache_dir = resolved
+                return
+            except Exception as e:
+                last_err = e
+
+        raise last_err if last_err else RuntimeError("No writable EMA JSON cache directory")
+
     async def _download(self, feed_key: str) -> Any:
         name = FEED_FILES[feed_key]
         url = f"{self._base}/{name}"
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._ensure_cache_dir()
         dest = self._cache_path(feed_key)
         timeout = httpx.Timeout(120.0)
         headers = {

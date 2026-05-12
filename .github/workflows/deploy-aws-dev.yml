@@ -240,6 +240,7 @@ jobs:
           GOOGLE_SEARCH_ENGINE_ID: ${{ secrets.GOOGLE_SEARCH_ENGINE_ID }}
           AACT_DB_USERNAME: ${{ secrets.AACT_DB_USERNAME }}
           AACT_DB_PASSWORD: ${{ secrets.AACT_DB_PASSWORD }}
+          REGULATORY_DATABASE_URL: ${{ secrets.REGULATORY_DATABASE_URL }}
         run: |
           test -n "$DEV_ORIGIN_VERIFY_HEADER"
           kubectl create namespace regulatory-dev --dry-run=client -o yaml | kubectl apply -f -
@@ -258,7 +259,9 @@ jobs:
             --from-literal=GOOGLE_API_KEY="${GOOGLE_API_KEY:-}" \
             --from-literal=GOOGLE_SEARCH_ENGINE_ID="${GOOGLE_SEARCH_ENGINE_ID:-}" \
             --from-literal=AACT_DB_USERNAME="${AACT_DB_USERNAME:-}" \
-            --from-literal=AACT_DB_PASSWORD="${AACT_DB_PASSWORD:-}"
+            --from-literal=AACT_DB_PASSWORD="${AACT_DB_PASSWORD:-}" \
+            --from-literal=DATABASE_URL="${REGULATORY_DATABASE_URL:-}" \
+            --from-literal=CHAT_PERSISTENCE_ENABLED="${CHAT_PERSISTENCE_ENABLED:-true}"
 
           # Fargate quota is tight in dev. Stop the large backend before applying
           # the new manifest so old backend capacity is released before replacement.
@@ -272,6 +275,26 @@ jobs:
             echo "Waiting for Fargate quota accounting to release backend capacity..."
             sleep 90
           fi
+
+          # Run Alembic from inside EKS before the new backend rollout. This assumes
+          # the database is reachable from the cluster network (typical private RDS);
+          # GitHub-hosted runners do not need direct DB access.
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          manifest = Path("infra/aws/k8s/dev/regulatory-migration-job.yaml").read_text()
+          manifest = manifest.replace("${BACKEND_IMAGE_URI}", os.environ["BACKEND_IMAGE_URI"])
+          Path("/tmp/regulatory-migration-job.yaml").write_text(manifest)
+          PY
+          kubectl -n regulatory-dev delete job regulatory-db-migrate --ignore-not-found
+          kubectl apply -f /tmp/regulatory-migration-job.yaml
+          if ! kubectl -n regulatory-dev wait --for=condition=complete job/regulatory-db-migrate --timeout=10m; then
+            echo "::error::Alembic migration job did not complete — dumping diagnostics into this log."
+            kubectl -n regulatory-dev describe job regulatory-db-migrate || true
+            kubectl -n regulatory-dev logs job/regulatory-db-migrate --all-containers=true --tail=200 || true
+            exit 1
+          fi
+          kubectl -n regulatory-dev logs job/regulatory-db-migrate --all-containers=true --tail=200 || true
 
           python - <<'PY'
           import os

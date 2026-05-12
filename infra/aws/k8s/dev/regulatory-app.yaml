@@ -81,6 +81,7 @@ spec:
             - name: DATA_S3_PREFIX
               value: regulatory-app-data
           envFrom:
+            # DATABASE_URL, CHAT_PERSISTENCE_ENABLED, CHAT_AUTO_CREATE_SCHEMA (optional) from regulatory-backend-env Secret
             - secretRef:
                 name: regulatory-backend-env
           volumeMounts:

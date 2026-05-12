@@ -27,6 +27,26 @@ export function MessageBubble({
   const isUser = message.role === "user"
   const ent = appearance === "enterprise"
   const citationItems = normalizeChatCitations(message.metadata?.citations)
+  const markdownComponents = {
+    table: ({ children }: { children?: React.ReactNode }) => (
+      <div className="not-prose my-4 w-full overflow-x-auto rounded-xl border border-border/60 bg-card/70 shadow-sm">
+        <table className="w-full min-w-max border-collapse text-xs">{children}</table>
+      </div>
+    ),
+    thead: ({ children }: { children?: React.ReactNode }) => (
+      <thead className="bg-muted/70 text-foreground">{children}</thead>
+    ),
+    th: ({ children }: { children?: React.ReactNode }) => (
+      <th className="border-b border-border/60 px-3.5 py-2.5 text-left align-bottom font-semibold whitespace-nowrap">
+        {children}
+      </th>
+    ),
+    td: ({ children }: { children?: React.ReactNode }) => (
+      <td className="min-w-[10rem] max-w-[28rem] whitespace-pre-wrap break-words border-t border-border/40 px-3.5 py-2.5 align-top">
+        {children}
+      </td>
+    ),
+  }
 
   return (
     <div
@@ -82,7 +102,7 @@ export function MessageBubble({
             ent
               ? isUser
                 ? "rounded-[1.25rem] px-4 py-3 ml-auto max-w-[85%] bg-muted/90 text-foreground border border-border/30"
-                : "rounded-none px-0 py-0 max-w-[min(100%,52rem)] bg-transparent border-0"
+                : "rounded-none px-0 py-0 w-full max-w-full bg-transparent border-0"
               : "rounded-lg px-4 py-3",
             !ent && isUser && "bg-primary text-white ml-auto",
             !ent && !isUser && "bg-card border border-border/50",
@@ -104,20 +124,22 @@ export function MessageBubble({
               "[&_h4]:text-sm [&_h4]:font-medium [&_h4]:mb-1.5 [&_h4]:mt-2 first:[&_h4]:mt-0",
               "[&_h5]:text-sm [&_h5]:font-medium [&_h5]:mb-1 [&_h5]:mt-2 first:[&_h5]:mt-0",
               "[&_h6]:text-xs [&_h6]:font-medium [&_h6]:mb-1 [&_h6]:mt-2 first:[&_h6]:mt-0",
-              "[&_p]:text-sm [&_p]:leading-relaxed [&_p]:mb-2 last:[&_p]:mb-0",
+              "[&_p]:text-sm [&_p]:leading-relaxed [&_p]:mb-2 [&_p]:whitespace-pre-wrap last:[&_p]:mb-0",
               "[&_ul]:text-sm [&_ul]:mb-2 [&_ul]:ml-0 [&_ul]:pl-5 [&_ul]:list-disc",
               "[&_ol]:text-sm [&_ol]:mb-2 [&_ol]:ml-0 [&_ol]:pl-5 [&_ol]:list-decimal",
-              "[&_li]:mb-1 [&_li]:leading-relaxed [&_li]:pl-1",
-              "[&_li>p]:inline [&_li>p]:mb-0",
+              "[&_li]:mb-1.5 [&_li]:leading-relaxed [&_li]:pl-1",
+              "[&_li>p]:my-1 [&_li>p:first-child]:mt-0 [&_li>p:last-child]:mb-0",
               "[&_li>ul]:mt-1.5 [&_li>ol]:mt-1.5 [&_li>ul]:list-[circle]",
               "[&_code]:text-xs [&_code]:px-1.5 [&_code]:py-0.5",
               "[&_pre]:text-xs [&_pre]:p-3 [&_pre]:my-2",
               "[&_blockquote]:text-sm [&_blockquote]:pl-3 [&_blockquote]:border-l-2 [&_blockquote]:my-2",
-              "[&_table]:text-xs [&_table]:my-2",
+              !isUser && "[&>:not(.not-prose)]:max-w-[52rem]",
               "[&_a]:text-sm [&_a]:underline [&_a]:underline-offset-2"
             )}
           >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
           </div>
         </div>
 

@@ -54,6 +54,15 @@ const nextConfig = {
     minimumCacheTTL: 60,
   },
   
+  /** Same-origin /api/chat → backend when NEXT_PUBLIC_CHAT_RELATIVE=true (helps cookies in local dev). */
+  async rewrites() {
+    if (process.env.NEXT_PUBLIC_CHAT_RELATIVE === "true") {
+      const dest = (process.env.NEXT_CHAT_API_DEST || "http://127.0.0.1:8001").replace(/\/$/, "")
+      return [{ source: "/api/chat/:path*", destination: `${dest}/api/chat/:path*` }]
+    }
+    return []
+  },
+
   // Headers for better caching
   async headers() {
     return [
@@ -84,6 +93,15 @@ const nextConfig = {
         ],
       },
     ];
+  },
+  
+  async rewrites() {
+    const backend = process.env.BACKEND_AGENT_URL || process.env.NEXT_PUBLIC_BACKEND_AGENT_URL
+    if (!backend) return []
+    const dest = backend.replace(/\/$/, "")
+    return [
+      { source: "/api/chat/:path*", destination: `${dest}/api/chat/:path*` },
+    ]
   },
 };
 

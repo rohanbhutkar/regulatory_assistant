@@ -30,6 +30,12 @@ logger = logging.getLogger(__name__)
 # pulls the full agent graph and delays uvicorn bind; see _blocking_post_essential_startup.)
 from api import persona_routes, asset_routes, trial_routes, commercial_routes, data_routes, protocol_routes, analysis_routes, site_map_routes, cpp_routes, fmv_routes, insights_routes
 from api import asset_strategy_routes, pricing_routes, hta_routes, financial_routes, scenario_routes, data_catalog_routes, asset_ai_routes, reporting_routes, payer_data_routes, regulatory_routes
+from api import chat_persistence_routes
+from api.chat_rate_limit import limiter
+from db.chat_database import dispose_chat_database, init_chat_database
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from services.regulatory_document_store import regulatory_document_store
 from utils.optimized_data_loader import OptimizedDataLoader
 from services.asset_management_service import asset_management_service
@@ -125,6 +131,10 @@ async def lifespan(app: FastAPI):
     Heavy work runs in a background task so uvicorn binds immediately; /alb-health and probes succeed
     while data and agents load (can take many minutes on Fargate + S3).
     """
+    try:
+        await init_chat_database()
+    except Exception:
+        logger.exception("Chat database init failed (chat history may be unavailable)")
     logger.info("🚀 Binding HTTP — platform init in background (Kubernetes probes need this)...")
     startup_task = asyncio.create_task(_heavy_platform_startup())
     app.state.startup_task = startup_task
@@ -142,6 +152,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("🛑 Shutting down...")
+    await dispose_chat_database()
     startup_task.cancel()
     with suppress(asyncio.CancelledError):
         await startup_task
@@ -150,8 +161,10 @@ app = FastAPI(
     title="Clinical Knowledge Agent Platform - Complete",
     description="Full-featured clinical research platform with multi-agent capabilities",
     version="2.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 def _cors_allow_origins() -> list:
     base = [
@@ -193,6 +206,7 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+app.add_middleware(SlowAPIMiddleware)
 
 # Include ALL existing API routes
 app.include_router(persona_routes.router, prefix="/api/personas", tags=["personas"])
@@ -216,6 +230,7 @@ app.include_router(fmv_routes.router, tags=["fmv"])
 app.include_router(insights_routes.router, prefix="/api/insights", tags=["insights"])
 app.include_router(payer_data_routes.router, prefix="/api", tags=["Payer Data"])
 app.include_router(regulatory_routes.router, prefix="/api/regulatory", tags=["regulatory"])
+app.include_router(chat_persistence_routes.router, prefix="/api/chat", tags=["chat"])
 
 # Health check with both data loader and agent status
 @app.get("/health")

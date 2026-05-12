@@ -7,6 +7,7 @@ import asyncio
 import pandas as pd
 import re
 import json
+from urllib.parse import quote
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from models.schemas import ClinicalTrialResult
@@ -15,6 +16,23 @@ from utils.logger import log_error
 from utils.cache import cache_manager
 from agents.llm_agent import llm_agent
 from utils.regulatory_data_io import read_regulatory_excel
+
+
+def dailymed_label_url(zip_file: Any = None, product_code: Any = None, title: Any = None) -> Optional[str]:
+    """Build a DailyMed URL from the SPL setid in zip_file, falling back to search."""
+    raw_zip = str(zip_file or "").strip()
+    match = re.search(
+        r"(?:^|_)([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})\.zip$",
+        raw_zip,
+    )
+    if match:
+        return f"https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid={match.group(1)}"
+
+    query = str(product_code or title or "").strip()
+    if not query:
+        return None
+    return f"https://dailymed.nlm.nih.gov/dailymed/search.cfm?query={quote(query)}"
+
 
 class FDALabelsAgent:
     """Agent for accessing FDA Structured Labels data"""
@@ -462,7 +480,11 @@ Return ONLY valid JSON with search criteria:
                 'specific_populations': label.get('USE_IN_SPECIFIC_POPULATIONS', ''),
                 'relevance_score': label.get('relevance_score', 0),
                 'source': 'FDA Labels',
-                'url': f"https://www.accessdata.fda.gov/drugsatfda_docs/label/{label.get('effective_time', '')}/{label.get('product_code', '')}lbl.pdf" if label.get('effective_time') and label.get('product_code') else None
+                'url': dailymed_label_url(
+                    label.get('zip_file'),
+                    label.get('product_code'),
+                    label.get('document_title'),
+                ),
             }
             
             return result

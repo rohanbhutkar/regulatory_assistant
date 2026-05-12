@@ -10,6 +10,8 @@ import { ChevronLeft, ChevronRight, Download, Trash2, Square, Share2, Star, User
 import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
+import { chatAppendMessage, chatCompleteTurn, chatListMessages } from "@/lib/chat-persistence-api"
+import { normalizeChatCitations } from "@/lib/chat-citations"
 import { titleFromFirstUserMessage } from "@/lib/regulatory-chat-sessions"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
@@ -211,6 +213,10 @@ export interface ResearchAgentChatProps {
   /** When set with onSessionActivity, syncs chat title with multi-session sidebar */
   sessionId?: string
   onSessionActivity?: (payload: { sessionId: string; title: string; messageCount: number }) => void
+  /** When true with variant regulatory, messages load/save via /api/chat (Postgres). */
+  remotePersistence?: boolean
+  /** Fired when a research request starts (session id) or ends (null) for sidebar pending UI. */
+  onResearchPendingSessionChange?: (sessionId: string | null) => void
 }
 
 function deserializeMessages(raw: string): Message[] {
@@ -234,6 +240,8 @@ export function ResearchAgentChat({
   presentation = "default",
   sessionId,
   onSessionActivity,
+  remotePersistence = false,
+  onResearchPendingSessionChange,
 }: ResearchAgentChatProps) {
   const studyDesigner = useStudyDesignerOptional()
   const agentActions = studyDesigner?.agentActions ?? null
@@ -263,6 +271,9 @@ export function ResearchAgentChat({
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window === "undefined") {
       return variant === "regulatory" ? [] : [welcomeMessage]
+    }
+    if (remotePersistence && variant === "regulatory") {
+      return []
     }
     if (persistHistory && storageKey) {
       try {
@@ -310,6 +321,43 @@ export function ResearchAgentChat({
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const progressStripRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const loadingSessionRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!remotePersistence || variant !== "regulatory" || !sessionId) return
+    const ac = new AbortController()
+    ;(async () => {
+      try {
+        const rows = await chatListMessages(sessionId)
+        if (ac.signal.aborted) return
+        const mapped: Message[] = rows.map((m) => ({
+          id: m.id,
+          role: m.role as Message["role"],
+          content: m.content,
+          timestamp: new Date(m.timestamp),
+          metadata: (m.metadata || undefined) as Message["metadata"],
+        }))
+        setMessages(mapped)
+      } catch (e) {
+        if (ac.signal.aborted) return
+        console.error(e)
+        toast.error("Could not load chat history", {
+          description: e instanceof Error ? e.message : String(e),
+        })
+        setMessages([])
+      }
+    })()
+    return () => ac.abort()
+  }, [sessionId, remotePersistence, variant])
+
+  useEffect(() => {
+    if (!remotePersistence || variant !== "regulatory" || !onResearchPendingSessionChange) return
+    if (isLoading && loadingSessionRef.current) {
+      onResearchPendingSessionChange(loadingSessionRef.current)
+    } else {
+      onResearchPendingSessionChange(null)
+    }
+  }, [isLoading, remotePersistence, variant, onResearchPendingSessionChange])
 
   useEffect(() => {
     const n = deepResearchTimeline.length
@@ -325,6 +373,7 @@ export function ResearchAgentChat({
 
   useEffect(() => {
     if (!persistHistory || !storageKey || typeof window === "undefined") return
+    if (remotePersistence && variant === "regulatory") return
     try {
       if (messages.length <= 1) return
       localStorage.setItem(
@@ -334,7 +383,7 @@ export function ResearchAgentChat({
     } catch {
       /* ignore */
     }
-  }, [messages, persistHistory, storageKey])
+  }, [messages, persistHistory, storageKey, remotePersistence, variant])
 
   const sidebarTitle = useMemo(() => {
     const firstUser = messages.find((m) => m.role === "user")
@@ -378,9 +427,18 @@ export function ResearchAgentChat({
     options?: { skipUserMessage?: boolean },
   ) => {
     const skipUserMessage = options?.skipUserMessage ?? false
+    const turnSessionId = sessionId ?? ""
+    loadingSessionRef.current = null
+
+    const userPersistId =
+      remotePersistence && variant === "regulatory" && turnSessionId && !skipUserMessage
+        ? typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `user-${Date.now()}`
+        : ""
 
     const userMessage: Message = {
-      id: `user-${Date.now()}`,
+      id: userPersistId || `user-${Date.now()}`,
       role: "user",
       content,
       timestamp: new Date(),
@@ -397,13 +455,49 @@ export function ResearchAgentChat({
         : undefined,
     }
 
+    if (remotePersistence && variant === "regulatory" && turnSessionId && !skipUserMessage) {
+      try {
+        await chatAppendMessage(turnSessionId, {
+          id: userMessage.id,
+          role: "user",
+          content,
+          metadata: {},
+        })
+      } catch (e) {
+        toast.error("Could not save message to history", {
+          description: e instanceof Error ? e.message : String(e),
+        })
+        return
+      }
+    }
+
     let conversationBase = messages
     if (!skipUserMessage) {
       conversationBase = [...messages, userMessage]
       setMessages(conversationBase)
     }
+    loadingSessionRef.current = turnSessionId || null
     setIsLoading(true)
     abortResearchRef.current = false
+
+    const persistRemoteAssistant = async (userClientId: string, ai: Message) => {
+      if (!remotePersistence || variant !== "regulatory" || !turnSessionId || !userClientId) return
+      try {
+        await chatCompleteTurn(turnSessionId, {
+          user_message_client_id: userClientId,
+          assistant: {
+            id: ai.id,
+            content: ai.content,
+            metadata: (ai.metadata || {}) as Record<string, unknown>,
+          },
+        })
+      } catch (e) {
+        console.error("complete-turn failed", e)
+        toast.error("Could not save reply to history", {
+          description: e instanceof Error ? e.message : String(e),
+        })
+      }
+    }
 
     const lowerContent = content.toLowerCase()
 
@@ -688,15 +782,19 @@ export function ResearchAgentChat({
           typeof synthesis?.answer === "string" && synthesis.answer.trim()
             ? synthesis.answer
             : "The server returned no answer text."
+        const assistantId =
+          remotePersistence && variant === "regulatory" && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : `ai-${Date.now()}`
         const aiMessage: Message = {
-          id: `ai-${Date.now()}`,
+          id: assistantId,
           role: "assistant",
           content: answer,
           timestamp: new Date(),
           agentName: "Multi-Agent Research Platform",
           agentType: "research",
           metadata: {
-            citations: Array.isArray(synthesis?.citations) ? synthesis!.citations! : [],
+            citations: normalizeChatCitations(synthesis?.citations),
             confidence: synthesis?.confidence ?? 0.8,
             data_quality: synthesis?.data_quality ?? "good",
             processing_time: json.metadata?.processing_time ?? 0,
@@ -705,6 +803,7 @@ export function ResearchAgentChat({
           },
         }
         setMessages((prev) => [...prev, aiMessage])
+        void persistRemoteAssistant(userPersistId, aiMessage)
         setIsLoading(false)
         setQuerySteps([])
         setCurrentStep(undefined)
@@ -1177,15 +1276,19 @@ export function ResearchAgentChat({
             // NOTE: Legacy criteria generation removed - now handled by graph execution
             // The graph-based system properly handles protocol generation through protocol_generate nodes
             
+            const assistantWsId =
+              remotePersistence && variant === "regulatory" && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+                ? crypto.randomUUID()
+                : `ai-${Date.now()}`
             const aiMessage: Message = {
-              id: `ai-${Date.now()}`,
+              id: assistantWsId,
               role: "assistant",
               content: answer,
               timestamp: new Date(),
               agentName: "Multi-Agent Research Platform",
               agentType: "research",
               metadata: {
-                citations: synthesis?.citations ?? [],
+                citations: normalizeChatCitations(synthesis?.citations),
                 confidence: synthesis?.confidence || 0.8,
                 data_quality: synthesis?.data_quality || "good",
                 processing_time: data.data?.processing_time || 0,
@@ -1194,6 +1297,7 @@ export function ResearchAgentChat({
             }
             
             setMessages((prev) => [...prev, aiMessage])
+            void persistRemoteAssistant(userPersistId, aiMessage)
             setIsLoading(false)
             
             // Clear progress steps
@@ -1419,7 +1523,7 @@ export function ResearchAgentChat({
           <div
             className={cn(
               "mx-auto w-full py-6 space-y-4",
-              isEnterprise ? "max-w-3xl px-6" : "max-w-5xl px-4 sm:px-6",
+              isEnterprise ? "max-w-6xl px-4 sm:px-8 lg:px-10" : "max-w-5xl px-4 sm:px-6",
             )}
           >
             {showRegulatoryEphemeralWelcome && (
@@ -1657,7 +1761,7 @@ export function ResearchAgentChat({
                                     key={j}
                                     className="border-l-[3px] border-muted-foreground/25 pl-3 text-sm leading-relaxed text-foreground/90 [&_.prose]:my-0 [&_.prose_p]:mb-1 [&_.prose_p:last-child]:mb-0"
                                   >
-                                    <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+                                    <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_li>p]:my-1 [&_li>p:first-child]:mt-0 [&_li>p:last-child]:mb-0">
                                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{b}</ReactMarkdown>
                                     </div>
                                   </div>

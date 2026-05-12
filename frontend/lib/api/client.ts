@@ -88,16 +88,80 @@ export class APIClient {
     return this.request(`/api/commercial/market/${indication}`)
   }
 
-  // Chat endpoints
-  async sendChatMessage(message: string, personaId: string, sessionId?: string) {
-    return this.request("/api/chat/message", {
+  // Chat persistence (cookie + credentials)
+  private async requestWithCredentials<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const url = `${this.baseURL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
+    const response = await fetch(url, {
+      ...options,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+      },
+    })
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.statusText}`)
+    }
+    return await response.json()
+  }
+
+  async chatBootstrap() {
+    return this.requestWithCredentials("/api/chat/visitors/bootstrap", { method: "POST" })
+  }
+
+  async chatListSessions(variant?: string) {
+    const q = variant ? `?variant=${encodeURIComponent(variant)}` : ""
+    return this.requestWithCredentials(`/api/chat/sessions${q}`, { method: "GET" })
+  }
+
+  async chatCreateSession(body: { title?: string; variant?: string }) {
+    return this.requestWithCredentials("/api/chat/sessions", {
       method: "POST",
-      body: JSON.stringify({ message, personaId, sessionId }),
+      body: JSON.stringify({ title: body.title ?? "New chat", variant: body.variant ?? "regulatory" }),
     })
   }
 
-  async getChatHistory(sessionId: string) {
-    return this.request(`/api/chat/history/${sessionId}`)
+  async chatPatchSession(
+    sessionId: string,
+    body: { title?: string; starred?: boolean; titlePinned?: boolean },
+  ) {
+    const payload: Record<string, unknown> = {}
+    if (body.title !== undefined) payload.title = body.title
+    if (body.starred !== undefined) payload.starred = body.starred
+    if (body.titlePinned !== undefined) payload.title_pinned = body.titlePinned
+    return this.requestWithCredentials(`/api/chat/sessions/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async chatDeleteSession(sessionId: string) {
+    return this.requestWithCredentials(`/api/chat/sessions/${sessionId}`, { method: "DELETE" })
+  }
+
+  async chatListMessages(sessionId: string) {
+    return this.requestWithCredentials(`/api/chat/sessions/${sessionId}/messages`, { method: "GET" })
+  }
+
+  async chatAppendMessage(
+    sessionId: string,
+    body: { content: string; metadata?: Record<string, unknown>; client_message_id?: string },
+  ) {
+    return this.requestWithCredentials(`/api/chat/sessions/${sessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  }
+
+  async chatCompleteTurn(
+    sessionId: string,
+    body: { content: string; metadata?: Record<string, unknown>; idempotency_key: string },
+  ) {
+    return this.requestWithCredentials(`/api/chat/sessions/${sessionId}/complete-turn`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Idempotency-Key": body.idempotency_key },
+    })
   }
 }
 

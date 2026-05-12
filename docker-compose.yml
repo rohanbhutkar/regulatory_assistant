@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: study_designer_postgres
+    environment:
+      POSTGRES_USER: regulatory
+      POSTGRES_PASSWORD: regulatory
+      POSTGRES_DB: regulatory_chat
+    ports:
+      - "5432:5432"
+    volumes:
+      - regulatory_pg_data:/var/lib/postgresql/data
+    networks:
+      - study_designer_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U regulatory -d regulatory_chat"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -15,8 +34,14 @@ services:
       - ./backend/logs:/app/logs
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+asyncpg://regulatory:regulatory@postgres:5432/regulatory_chat
+      - CHAT_PERSISTENCE_ENABLED=true
+      - CHAT_AUTO_CREATE_SCHEMA=true
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - study_designer_network
@@ -56,4 +81,4 @@ networks:
 
 volumes:
   backend_logs:
-
+  regulatory_pg_data:
