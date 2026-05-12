@@ -127,6 +127,9 @@ Resources:
         MetricName: !Sub ${ProjectName}-${Environment}-edge
         SampledRequestsEnabled: true
       Rules:
+        # Chat persistence POSTs large JSON bodies (assistant markdown). AWSManagedRulesCommonRuleSet
+        # includes SizeRestrictions_BODY (~8KB) and similar checks that block those requests with 403.
+        # Scope the managed group to everything except /api/chat/* so history saves reach the origin.
         - Name: aws-common-rules
           Priority: 0
           OverrideAction:
@@ -135,6 +138,17 @@ Resources:
             ManagedRuleGroupStatement:
               VendorName: AWS
               Name: AWSManagedRulesCommonRuleSet
+              ScopeDownStatement:
+                NotStatement:
+                  Statement:
+                    ByteMatchStatement:
+                      SearchString: /api/chat
+                      FieldToMatch:
+                        UriPath: {}
+                      TextTransformations:
+                        - Priority: 0
+                          Type: LOWERCASE
+                      PositionalConstraint: STARTS_WITH
           VisibilityConfig:
             CloudWatchMetricsEnabled: true
             MetricName: aws-common-rules
