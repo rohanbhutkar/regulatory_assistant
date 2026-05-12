@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,7 +22,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import type { RegulatorySessionMeta } from "@/lib/regulatory-chat-sessions"
 import { cn } from "@/lib/utils"
 import {
@@ -36,6 +36,11 @@ import {
 } from "lucide-react"
 
 const CHAT_PREVIEW_LIMIT = 10
+
+function sessionDisplayTitle(s: RegulatorySessionMeta): string {
+  const t = typeof s.title === "string" ? s.title.trim() : ""
+  return t || "New chat"
+}
 
 interface RegulatorySidebarProps {
   sessions: RegulatorySessionMeta[]
@@ -89,17 +94,13 @@ export function RegulatorySidebar({
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState("")
   const [deleteId, setDeleteId] = useState<string | null>(null)
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
 
   const showMore = visibleList.length > CHAT_PREVIEW_LIMIT
-  const displayedChats = chatsExpanded
-    ? visibleList
-    : visibleList.slice(0, CHAT_PREVIEW_LIMIT)
+  const displayedChats = chatsExpanded ? visibleList : visibleList.slice(0, CHAT_PREVIEW_LIMIT)
 
   const openRename = (s: RegulatorySessionMeta) => {
     setRenameId(s.id)
-    setRenameValue(s.title)
-    setMenuOpenId(null)
+    setRenameValue(sessionDisplayTitle(s))
   }
 
   const commitRename = () => {
@@ -150,14 +151,15 @@ export function RegulatorySidebar({
         </Link>
       </div>
 
-      <div className="p-3 space-y-1 border-b border-border/40">
+      <div className="shrink-0 p-3 space-y-1 border-b border-border/40">
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 h-10 px-3 rounded-xl text-sm font-medium hover:bg-background/80"
+          type="button"
           onClick={onNewChat}
         >
-          <MessageSquarePlus className="h-4 w-4 text-muted-foreground" />
-          New chat
+          <MessageSquarePlus className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">New chat</span>
         </Button>
         <Button
           variant={searchPanelOpen ? "secondary" : "ghost"}
@@ -165,8 +167,8 @@ export function RegulatorySidebar({
           type="button"
           onClick={() => onSearchPanelOpenChange(!searchPanelOpen)}
         >
-          <Search className="h-4 w-4 text-muted-foreground" />
-          Search chats
+          <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate">Search chats</span>
         </Button>
         {searchPanelOpen && (
           <Input
@@ -184,152 +186,187 @@ export function RegulatorySidebar({
           onClick={() => onStarredOnlyChange(!starredOnly)}
         >
           <Star
-            className={cn("h-4 w-4", starredOnly ? "fill-amber-400 text-amber-500" : "text-muted-foreground")}
+            className={cn("h-4 w-4 shrink-0", starredOnly ? "fill-amber-400 text-amber-500" : "text-muted-foreground")}
           />
-          Starred
+          <span className="truncate">Starred</span>
           {starredCount > 0 && (
-            <span className="ml-auto text-[11px] tabular-nums text-muted-foreground">{starredCount}</span>
+            <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted-foreground">{starredCount}</span>
           )}
         </Button>
       </div>
 
-      <div className="flex flex-1 flex-col min-h-0 border-t border-border/30">
-        <div className="px-3 pt-2 pb-1 shrink-0">
+      <div className="flex min-h-0 flex-1 flex-col border-t border-border/30">
+        <div className="shrink-0 px-3 pt-2 pb-1.5">
           <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
         </div>
-        <ScrollArea className="flex-1 min-h-0 min-w-0 px-2">
-        <div className="min-w-0 space-y-0.5 pb-3 pr-4">
-          {displayedChats.length === 0 ? (
-            <p className="px-2 py-6 text-xs text-muted-foreground text-center leading-relaxed">
-              {sessionList.length === 0
-                ? "No chats yet. Start with New chat."
-                : "No chats match filters. Clear search or starred view."}
-            </p>
-          ) : (
-            displayedChats.map((s) => (
-              <div key={s.id} className="relative group/item min-w-0">
-                <div
-                  className={cn(
-                    "flex w-full min-w-0 max-w-full items-center gap-1 rounded-xl pl-2 pr-1 py-1.5 text-left text-sm transition-colors",
-                    s.id === activeSessionId
-                      ? "bg-[#d3e3fd]/80 dark:bg-primary/20 text-foreground"
-                      : "hover:bg-background/80",
-                  )}
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 min-h-0 flex-1 overflow-hidden py-1 pl-0 pr-0.5 text-left font-medium rounded-lg"
-                    onClick={() => onSelectSession(s.id)}
-                    title={s.title}
-                  >
-                    <span className="block truncate">{s.title}</span>
-                  </button>
-                  <div className="relative z-10 flex shrink-0 items-center gap-0.5">
-                    {pendingResearchSessionId === s.id && (
-                      <Loader2
-                        className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
-                        aria-label="Reply in progress"
-                      />
+
+        <div className="min-h-0 flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-2 [scrollbar-gutter:stable]">
+          <div className="min-w-0 space-y-1 pb-3">
+            {displayedChats.length === 0 ? (
+              <p className="px-2 py-6 text-center text-xs leading-relaxed text-muted-foreground">
+                {sessionList.length === 0
+                  ? "No chats yet. Start with New chat."
+                  : "No chats match filters. Clear search or starred view."}
+              </p>
+            ) : (
+              displayedChats.map((s) => {
+                const label = sessionDisplayTitle(s)
+                const isActive = s.id === activeSessionId
+                const isPending = pendingResearchSessionId === s.id
+
+                return (
+                  <div
+                    key={s.id}
+                    className={cn(
+                      "grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1 rounded-xl px-1.5 py-1 text-sm transition-colors",
+                      isActive
+                        ? "bg-[#d3e3fd]/80 ring-1 ring-border/40 dark:bg-primary/20 dark:ring-border/30"
+                        : "hover:bg-background/80",
                     )}
+                  >
                     <button
                       type="button"
-                      className="shrink-0 p-1.5 rounded-md hover:bg-background/60 text-muted-foreground hover:text-foreground"
-                      aria-label={s.starred ? "Unstar" : "Star chat"}
-                      onClick={() => onToggleStar(s.id)}
+                      className="min-h-8 min-w-0 overflow-hidden rounded-lg py-1 pl-1 pr-0.5 text-left font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-transparent"
+                      onClick={() => onSelectSession(s.id)}
+                      title={label}
                     >
-                      <Star
-                        className={cn(
-                          "h-3.5 w-3.5",
-                          s.starred ? "fill-amber-400 text-amber-500" : "text-muted-foreground",
-                        )}
-                      />
+                      <span className={cn("block truncate", !s.title?.trim() && "text-muted-foreground")}>
+                        {label}
+                      </span>
                     </button>
-                    <button
-                      type="button"
-                      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                      aria-label="Delete chat"
-                      title="Delete chat"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteId(s.id)
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-background/60"
-                      aria-label="Chat actions"
-                      onClick={() => setMenuOpenId(menuOpenId === s.id ? null : s.id)}
-                    >
-                      <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-                    </button>
-                  </div>
-                </div>
-                {menuOpenId === s.id && (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Close menu"
-                      className="fixed inset-0 z-40 cursor-default"
-                      onClick={() => setMenuOpenId(null)}
-                    />
-                    <div className="absolute right-2 top-full z-50 mt-0.5 w-44 rounded-lg border border-border/60 bg-background shadow-md py-1 text-sm">
+
+                    <div className="flex shrink-0 items-center justify-end gap-0.5 pr-0.5">
+                      {isPending && (
+                        <span
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center"
+                          role="status"
+                          aria-label="Reply in progress"
+                        >
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />
+                        </span>
+                      )}
                       <button
                         type="button"
-                        className="w-full px-3 py-2 text-left hover:bg-muted/80"
-                        onClick={() => openRename(s)}
+                        className={cn(
+                          "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors",
+                          "hover:bg-background/70 hover:text-foreground",
+                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-transparent",
+                        )}
+                        aria-label={s.starred ? "Unstar chat" : "Star chat"}
+                        aria-pressed={Boolean(s.starred)}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onToggleStar(s.id)
+                        }}
                       >
-                        Rename
+                        <Star
+                          className={cn(
+                            "h-3.5 w-3.5",
+                            s.starred ? "fill-amber-400 text-amber-500" : "text-muted-foreground",
+                          )}
+                        />
                       </button>
                       <button
                         type="button"
-                        className="w-full px-3 py-2 text-left text-destructive hover:bg-muted/80 flex items-center gap-2"
-                        onClick={() => {
+                        className={cn(
+                          "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors",
+                          "hover:bg-destructive/10 hover:text-destructive",
+                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-transparent",
+                        )}
+                        aria-label="Delete chat"
+                        title="Delete chat"
+                        onClick={(e) => {
+                          e.stopPropagation()
                           setDeleteId(s.id)
-                          setMenuOpenId(null)
                         }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        Delete
                       </button>
+
+                      <DropdownMenu.Root modal={false}>
+                        <DropdownMenu.Trigger asChild>
+                          <button
+                            type="button"
+                            className={cn(
+                              "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors",
+                              "hover:bg-background/70 hover:text-foreground",
+                              "data-[state=open]:bg-background/80 data-[state=open]:text-foreground",
+                              "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-transparent",
+                            )}
+                            aria-label="More chat actions"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </button>
+                        </DropdownMenu.Trigger>
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            side="bottom"
+                            align="end"
+                            sideOffset={6}
+                            collisionPadding={12}
+                            className={cn(
+                              "z-[100] min-w-[10rem] overflow-hidden rounded-lg border border-border/60 bg-popover p-1 text-popover-foreground shadow-lg",
+                            )}
+                          >
+                            <DropdownMenu.Item
+                              className={cn(
+                                "flex cursor-pointer select-none items-center rounded-md px-2 py-2 text-sm outline-none",
+                                "focus:bg-accent focus:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground",
+                              )}
+                              onSelect={() => openRename(s)}
+                            >
+                              Rename
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              className={cn(
+                                "flex cursor-pointer select-none items-center gap-2 rounded-md px-2 py-2 text-sm text-destructive outline-none",
+                                "focus:bg-destructive/10 focus:text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive",
+                              )}
+                              onSelect={() => setDeleteId(s.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 shrink-0" />
+                              Delete…
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu.Root>
                     </div>
+                  </div>
+                )
+              })
+            )}
+
+            {showMore && (
+              <button
+                type="button"
+                onClick={() => setChatsExpanded((e) => !e)}
+                className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg py-2 text-xs text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+              >
+                {chatsExpanded ? (
+                  <>
+                    Show less <ChevronDown className="h-3 w-3 rotate-180" />
+                  </>
+                ) : (
+                  <>
+                    Show more ({visibleList.length - CHAT_PREVIEW_LIMIT}) <ChevronDown className="h-3 w-3" />
                   </>
                 )}
-              </div>
-            ))
-          )}
-          {showMore && (
-            <button
-              type="button"
-              onClick={() => setChatsExpanded((e) => !e)}
-              className="w-full flex items-center justify-center gap-1 py-2 text-xs text-muted-foreground hover:text-foreground"
-            >
-              {chatsExpanded ? (
-                <>
-                  Show less <ChevronDown className="h-3 w-3 rotate-180" />
-                </>
-              ) : (
-                <>
-                  Show more ({visibleList.length - CHAT_PREVIEW_LIMIT}) <ChevronDown className="h-3 w-3" />
-                </>
-              )}
-            </button>
-          )}
+              </button>
+            )}
+          </div>
         </div>
-      </ScrollArea>
       </div>
 
-      <div className="p-3 border-t border-border/40 space-y-1 shrink-0">
-        
+      <div className="shrink-0 space-y-1 border-t border-border/40 p-3">
         <Button
           variant="ghost"
-          className="w-full justify-start gap-3 h-10 px-3 rounded-xl text-sm text-muted-foreground hover:text-foreground"
+          className="w-full justify-start gap-3 rounded-xl px-3 py-2 h-10 text-sm text-muted-foreground hover:text-foreground"
           type="button"
           onClick={() => onSettingsOpenChange(true)}
         >
-          <Settings className="h-4 w-4" />
-          Settings & help
+          <Settings className="h-4 w-4 shrink-0" />
+          <span className="truncate">Settings & help</span>
         </Button>
       </div>
 
@@ -338,7 +375,11 @@ export function RegulatorySidebar({
           <DialogHeader>
             <DialogTitle>Rename chat</DialogTitle>
           </DialogHeader>
-          <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && commitRename()} />
+          <Input
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && commitRename()}
+          />
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setRenameId(null)}>
               Cancel
@@ -386,7 +427,7 @@ export function RegulatorySidebar({
               full regulatory and clinical data stack automatically.
             </p>
           </div>
-          <DialogFooter className="flex-col sm:flex-col gap-2">
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
             <Button
               variant="destructive"
               className="w-full"
