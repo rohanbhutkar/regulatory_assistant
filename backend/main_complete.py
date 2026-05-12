@@ -55,13 +55,9 @@ insights_routes.set_data_loader(data_loader)  # Initialize insights routes with 
 asset_strategy_routes.set_data_loader(data_loader)  # Initialize asset strategy routes with data loader
 
 
-async def _heavy_platform_startup() -> None:
-    """Data + services + reasoning engine (minutes on cold S3/Fargate). Runs after uvicorn accepts traffic."""
+def _blocking_post_essential_startup() -> None:
+    """CPU/IO-heavy service init; must not run on the asyncio loop or probes stall."""
     global reasoning_engine
-
-    logger.info("📊 Loading essential data...")
-    await data_loader.load_essential_data()
-    logger.info("✅ Essential data loaded")
 
     logger.info("💼 Initializing AssetManagementService...")
     count = asset_management_service.initialize_from_trialtrove(data_loader)
@@ -111,6 +107,15 @@ async def _heavy_platform_startup() -> None:
     logger.info(f"🎯 Active agents: {', '.join(active_agents[:10])}...")
 
     logger.info("🎉 Complete platform ready with all features!")
+
+
+async def _heavy_platform_startup() -> None:
+    """Data + services + reasoning engine (minutes on cold S3/Fargate). Runs after uvicorn accepts traffic."""
+    logger.info("📊 Loading essential data...")
+    await data_loader.load_essential_data()
+    logger.info("✅ Essential data loaded")
+
+    await asyncio.to_thread(_blocking_post_essential_startup)
 
 
 @asynccontextmanager

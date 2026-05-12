@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import PurePosixPath
 from typing import Any, Dict, Optional
 
@@ -18,8 +19,8 @@ class OptimizedDataLoader:
         self.loaded = False
         self.essential_data_loaded = False
 
-    async def load_essential_data(self):
-        """Load only essential data for demo - fast startup"""
+    def _load_essential_data_blocking(self) -> None:
+        """CPU/IO-bound essential load; run via asyncio.to_thread so the event loop can serve probes."""
         if self.essential_data_loaded:
             return
 
@@ -69,14 +70,19 @@ class OptimizedDataLoader:
         self.essential_data_loaded = True
         print("🎉 Essential data loading complete! Ready for demo.")
 
-    async def load_all_data(self):
-        """Load all CSV data - full dataset (slower startup)"""
+    async def load_essential_data(self):
+        """Load only essential data for demo - fast startup"""
+        if self.essential_data_loaded:
+            return
+        await asyncio.to_thread(self._load_essential_data_blocking)
+
+    def _load_all_data_blocking(self) -> None:
         if self.loaded:
             return
 
         print("📊 Loading complete dataset (this may take a while)...")
 
-        await self.load_essential_data()
+        self._load_essential_data_blocking()
 
         print("Loading full Claims data...")
         try:
@@ -118,6 +124,12 @@ class OptimizedDataLoader:
 
         self.loaded = True
         print("🎉 Complete data loading finished!")
+
+    async def load_all_data(self):
+        """Load all CSV data - full dataset (slower startup)"""
+        if self.loaded:
+            return
+        await asyncio.to_thread(self._load_all_data_blocking)
 
     def get_data(self, source: str) -> pd.DataFrame:
         """Get cached data"""
