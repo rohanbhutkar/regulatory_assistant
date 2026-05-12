@@ -1104,6 +1104,17 @@ export function ResearchAgentChat({
                 })
               })
             }
+            if (nodeData?.status === "completed" && nodeData?.result_summary) {
+              const progressMessage: Message = {
+                id: `progress-${Date.now()}`,
+                role: "assistant",
+                content: `✓ ${nodeData.node_id}: ${nodeData.result_summary}`,
+                timestamp: new Date(),
+                agentName: nodeData.node_id,
+                agentType: "progress",
+              }
+              setMessages((prev) => [...prev, progressMessage])
+            }
             return
           }
           
@@ -1112,152 +1123,7 @@ export function ResearchAgentChat({
             queryCompleted = true
             const synthesis = data.data?.synthesis
             const answer = synthesis?.answer || "I've processed your query. Here's what I found..."
-            
-            // Extract actionable insights from the multi-agent response
-            const lowerAnswer = answer.toLowerCase()
-            
-            // Check if the response suggests selecting trials
-            if ((lowerAnswer.includes("found") || lowerAnswer.includes("identified")) && lowerAnswer.includes("trial")) {
-              
-              // Use the FULL original query for enhanced smart search
-              // Remove action words like "pick", "select", "find", "show", "get"
-              const criteria = content
-                .replace(/^(pick|select|choose|find|show|get|give me|display)\s+/i, '')
-                .replace(/^all\s+(of\s+)?the\s+/i, '')
-                .replace(/\s+trials?\s*$/i, '')
-                .trim()
-              
-              
-              // Trigger trial selection if we have criteria and context is available
-              if (criteria && agentActions && agentActions.selectTrials) {
-                await agentActions.selectTrials(criteria, false)
-              }
-            }
-            
-            // Check for protocol generation in the graph plan and extract generated content
-            const graphPlan = data.data?.graph_plan
-            const executionResults = data.data?.results || data.data?.execution_results
-            
-            if (graphPlan && graphPlan.nodes && executionResults && agentActions) {
-              
-              // Map of section types to protocol section IDs in context
-              const sectionMapping: {[key: string]: string} = {
-                'title': 'title',
-                'introduction': 'introduction',
-                'rationale': 'rationale',
-                'background': 'background',
-                'hypothesis': 'hypothesis',
-                'primary_objectives': 'primary_objectives',
-                'secondary_objectives': 'secondary_objectives',
-                'primary_endpoints': 'primary_endpoints',
-                'secondary_endpoints': 'secondary_endpoints',
-                'inclusion_criteria': 'inclusion_criteria',
-                'exclusion_criteria': 'exclusion_criteria',
-                'study_design': 'study_design',
-                'schedule_of_activities': 'soa',
-                'schema': 'schema'
-              }
-              
-              // Check each node in the graph plan
-              for (const node of graphPlan.nodes) {
-                if (node.type === 'protocol_generate' || node.type === 'protocol_full') {
-                  
-                  // Get the execution results for this node
-                  const nodeResults = executionResults[node.id]
-                  
-                  if (nodeResults) {
-                    // For protocol_generate, extract the specific section
-                    if (node.type === 'protocol_generate') {
-                      // Results are in an array, get the first item
-                      const result = Array.isArray(nodeResults) ? nodeResults[0] : nodeResults
-                      const sectionType = result?.section_type || node.parameters?.section_type
-                      const sectionId = sectionMapping[sectionType]
-                      const content = result?.content
-                      
-                      
-                      if (sectionId && content) {
-                        await agentActions.updateProtocolSection?.(sectionId, content)
-                        
-                        // Switch to the appropriate tab
-                        if (sectionId === 'rationale' || sectionId === 'introduction' || sectionId === 'background') {
-                          agentActions.switchToTab?.('rationale')
-                        } else if (sectionId.includes('objectives')) {
-                          agentActions.switchToTab?.('objectives')
-                        } else if (sectionId.includes('endpoints')) {
-                          agentActions.switchToTab?.('endpoints')
-                        } else if (sectionId.includes('criteria')) {
-                          agentActions.switchToTab?.('ie-criteria')
-                        } else if (sectionId === 'study_design') {
-                          agentActions.switchToTab?.('overall-design')
-                        } else if (sectionId === 'soa') {
-                          agentActions.switchToTab?.('soa')
-                        } else if (sectionId === 'schema') {
-                          agentActions.switchToTab?.('schema')
-                        }
-                      }
-                    }
-                    
-                    // For protocol_full, extract all sections
-                    if (node.type === 'protocol_full') {
-                      // Results are in an array, get the first item
-                      const result = Array.isArray(nodeResults) ? nodeResults[0] : nodeResults
-                      const sections = result?.protocol_sections
-                      
-                      
-                      if (sections) {
-                        for (const [sectionType, content] of Object.entries(sections)) {
-                          const sectionId = sectionMapping[sectionType]
-                          if (sectionId && typeof content === 'string') {
-                            await agentActions.updateProtocolSection?.(sectionId, content)
-                          }
-                        }
-                        // Switch to protocol title tab
-                        agentActions.switchToTab?.('protocol-title')
-                      }
-                    }
-                  }
-                }
-                
-                // NEW: Check for synthesis nodes that generate protocol content
-                if (node.type === 'synthesize' || node.type === 'synthesis') {
-                  
-                  // Check if this is a protocol-related synthesis based on node ID or description
-                  const nodeId = node.id?.toLowerCase() || ''
-                  const nodeDesc = node.description?.toLowerCase() || ''
-                  
-                  // Detect rationale synthesis
-                  if (nodeId.includes('rationale') || nodeDesc.includes('rationale') || nodeDesc.includes('study rationale')) {
-                    const nodeResults = executionResults[node.id]
-                    
-                    if (nodeResults && synthesis?.answer) {
-                      await agentActions.updateProtocolSection?.('rationale', synthesis.answer)
-                      agentActions.switchToTab?.('rationale')
-                    }
-                  }
-                  
-                  // Detect other protocol sections from synthesis
-                  if (nodeId.includes('background') || nodeDesc.includes('background')) {
-                    const nodeResults = executionResults[node.id]
-                    if (nodeResults && synthesis?.answer) {
-                      await agentActions.updateProtocolSection?.('background', synthesis.answer)
-                      agentActions.switchToTab?.('rationale')
-                    }
-                  }
-                  
-                  if (nodeId.includes('objective') || nodeDesc.includes('objective')) {
-                    const nodeResults = executionResults[node.id]
-                    if (nodeResults && synthesis?.answer) {
-                      await agentActions.updateProtocolSection?.('primary_objectives', synthesis.answer)
-                      agentActions.switchToTab?.('objectives')
-                    }
-                  }
-                }
-              }
-            }
-            
-            // NOTE: Legacy criteria generation removed - now handled by graph execution
-            // The graph-based system properly handles protocol generation through protocol_generate nodes
-            
+
             const assistantWsId =
               remotePersistence && variant === "regulatory" && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
                 ? crypto.randomUUID()
@@ -1274,10 +1140,10 @@ export function ResearchAgentChat({
                 confidence: synthesis?.confidence || 0.8,
                 data_quality: synthesis?.data_quality || "good",
                 processing_time: data.data?.processing_time || 0,
-                agents_used: data.data?.graph_plan?.nodes?.map((n: any) => n.agent_type) || []
-              }
+                agents_used: data.data?.graph_plan?.nodes?.map((n: any) => n.agent_type) || [],
+              },
             }
-            
+
             setMessages((prev) => [...prev, aiMessage])
             setIsLoading(false)
 
@@ -1292,26 +1158,152 @@ export function ResearchAgentChat({
 
             ws.close()
             void persistRemoteAssistant(userPersistId, aiMessage)
-          } else if (data.type === "node_progress") {
-            // Handle real-time agent progress updates
-            const nodeData = data.data
-            
-            // Optionally add progress messages to chat
-            if (nodeData?.status === "completed" && nodeData?.result_summary) {
-              const progressMessage: Message = {
-                id: `progress-${Date.now()}`,
-                role: "assistant",
-                content: `✓ ${nodeData.node_id}: ${nodeData.result_summary}`,
-                timestamp: new Date(),
-                agentName: nodeData.node_id,
-                agentType: "progress"
+
+            // Study-design side effects only (regulatory chat has no agentActions). Never block the bubble above.
+            void (async () => {
+              try {
+                const lowerAnswer = answer.toLowerCase()
+
+                if (
+                  (lowerAnswer.includes("found") || lowerAnswer.includes("identified")) &&
+                  lowerAnswer.includes("trial")
+                ) {
+                  const criteria = content
+                    .replace(/^(pick|select|choose|find|show|get|give me|display)\s+/i, "")
+                    .replace(/^all\s+(of\s+)?the\s+/i, "")
+                    .replace(/\s+trials?\s*$/i, "")
+                    .trim()
+
+                  if (criteria && agentActions && agentActions.selectTrials) {
+                    await agentActions.selectTrials(criteria, false)
+                  }
+                }
+
+                const graphPlan = data.data?.graph_plan
+                const executionResults = data.data?.results || data.data?.execution_results
+
+                if (graphPlan && graphPlan.nodes && executionResults && agentActions) {
+                  const sectionMapping: { [key: string]: string } = {
+                    title: "title",
+                    introduction: "introduction",
+                    rationale: "rationale",
+                    background: "background",
+                    hypothesis: "hypothesis",
+                    primary_objectives: "primary_objectives",
+                    secondary_objectives: "secondary_objectives",
+                    primary_endpoints: "primary_endpoints",
+                    secondary_endpoints: "secondary_endpoints",
+                    inclusion_criteria: "inclusion_criteria",
+                    exclusion_criteria: "exclusion_criteria",
+                    study_design: "study_design",
+                    schedule_of_activities: "soa",
+                    schema: "schema",
+                  }
+
+                  for (const node of graphPlan.nodes) {
+                    if (node.type === "protocol_generate" || node.type === "protocol_full") {
+                      const nodeResults = executionResults[node.id]
+
+                      if (nodeResults) {
+                        if (node.type === "protocol_generate") {
+                          const result = Array.isArray(nodeResults) ? nodeResults[0] : nodeResults
+                          const sectionType = result?.section_type || node.parameters?.section_type
+                          const sectionId = sectionMapping[sectionType as string]
+                          const sectionContent = result?.content
+
+                          if (sectionId && sectionContent) {
+                            await agentActions.updateProtocolSection?.(sectionId, sectionContent)
+
+                            if (
+                              sectionId === "rationale" ||
+                              sectionId === "introduction" ||
+                              sectionId === "background"
+                            ) {
+                              agentActions.switchToTab?.("rationale")
+                            } else if (sectionId.includes("objectives")) {
+                              agentActions.switchToTab?.("objectives")
+                            } else if (sectionId.includes("endpoints")) {
+                              agentActions.switchToTab?.("endpoints")
+                            } else if (sectionId.includes("criteria")) {
+                              agentActions.switchToTab?.("ie-criteria")
+                            } else if (sectionId === "study_design") {
+                              agentActions.switchToTab?.("overall-design")
+                            } else if (sectionId === "soa") {
+                              agentActions.switchToTab?.("soa")
+                            } else if (sectionId === "schema") {
+                              agentActions.switchToTab?.("schema")
+                            }
+                          }
+                        }
+
+                        if (node.type === "protocol_full") {
+                          const result = Array.isArray(nodeResults) ? nodeResults[0] : nodeResults
+                          const sections = result?.protocol_sections
+
+                          if (sections) {
+                            for (const [sectionType, secContent] of Object.entries(sections)) {
+                              const sectionId = sectionMapping[sectionType]
+                              if (sectionId && typeof secContent === "string") {
+                                await agentActions.updateProtocolSection?.(sectionId, secContent)
+                              }
+                            }
+                            agentActions.switchToTab?.("protocol-title")
+                          }
+                        }
+                      }
+                    }
+
+                    if (node.type === "synthesize" || node.type === "synthesis") {
+                      const nodeId = node.id?.toLowerCase() || ""
+                      const nodeDesc = node.description?.toLowerCase() || ""
+
+                      if (
+                        nodeId.includes("rationale") ||
+                        nodeDesc.includes("rationale") ||
+                        nodeDesc.includes("study rationale")
+                      ) {
+                        const nodeResults = executionResults[node.id]
+
+                        if (nodeResults && synthesis?.answer) {
+                          await agentActions.updateProtocolSection?.("rationale", synthesis.answer)
+                          agentActions.switchToTab?.("rationale")
+                        }
+                      }
+
+                      if (nodeId.includes("background") || nodeDesc.includes("background")) {
+                        const nodeResults = executionResults[node.id]
+                        if (nodeResults && synthesis?.answer) {
+                          await agentActions.updateProtocolSection?.("background", synthesis.answer)
+                          agentActions.switchToTab?.("rationale")
+                        }
+                      }
+
+                      if (nodeId.includes("objective") || nodeDesc.includes("objective")) {
+                        const nodeResults = executionResults[node.id]
+                        if (nodeResults && synthesis?.answer) {
+                          await agentActions.updateProtocolSection?.("primary_objectives", synthesis.answer)
+                          agentActions.switchToTab?.("objectives")
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                toast.error("Could not apply follow-up actions from this answer", {
+                  description: e instanceof Error ? e.message : String(e),
+                })
               }
-              setMessages((prev) => [...prev, progressMessage])
-            }
+            })()
           } else if (data.type === "node_started" || data.type === "node_completed") {
             // Handle progress updates
           } else if (data.type === "error") {
-            throw new Error(data.message || "Multi-agent processing error")
+            const errText =
+              typeof data.error === "string" && data.error.trim()
+                ? data.error
+                : typeof data.message === "string" && data.message.trim()
+                  ? data.message
+                  : "Multi-agent processing error"
+            throw new Error(errText)
           }
         } catch {
           toast.error("Chat connection error", {

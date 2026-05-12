@@ -266,6 +266,17 @@ def _anchor_terms(terms: List[str]) -> List[str]:
     return out
 
 
+def _is_router_dump_anchor(a: str) -> bool:
+    """LLM routers sometimes emit a whole query line as one 'product_term' — never a real INN/brand."""
+    if len(a) > 48:
+        return True
+    if a.count(" ") >= 3:
+        return True
+    if len(a) > 28 and a.count(" ") >= 2:
+        return True
+    return False
+
+
 def _score_row(
     blob: str,
     terms: List[str],
@@ -300,11 +311,18 @@ def _score_row(
     # Prefer a discriminative long token (INN / brand / company), not generic procedure words
     # like "maintenance" that match many unrelated orphan/variation rows.
     if long_anchors and not inn_hit:
-        strong_long = [a for a in long_anchors if a not in _PRIMARY_LONG_ANCHOR_BLOCKLIST]
+        strong_long = [
+            a
+            for a in long_anchors
+            if a not in _PRIMARY_LONG_ANCHOR_BLOCKLIST and not _is_router_dump_anchor(a)
+        ]
         if strong_long:
             primary_long = max(strong_long, key=len)
             if primary_long not in must_surface:
-                return 0.0
+                # Identity-scoped rows: keep the long-token gate (prevents generic orphan/variation noise).
+                # Document / PIP / guidance feeds (no identity_blob): allow shorter anchors below.
+                if identity_blob is not None:
+                    return 0.0
 
     if gate_id is not None:
         if not anchors and not inn_hit:

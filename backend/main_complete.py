@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.websockets import WebSocketState
 import uvicorn
 from contextlib import asynccontextmanager, suppress
 import asyncio
@@ -317,6 +318,18 @@ async def get_agents():
         }
     }
 
+async def _safe_multiagent_ws_send(ws: WebSocket, payload: dict) -> bool:
+    """Send JSON to the research WebSocket; never raise (client may have closed first)."""
+    try:
+        if ws.client_state != WebSocketState.CONNECTED:
+            return False
+        await ws.send_json(payload)
+        return True
+    except Exception as e:
+        logger.debug("Multi-agent WS send skipped (%s): %s", type(e).__name__, e)
+        return False
+
+
 # WebSocket endpoint for multi-agent research (port 8001 style)
 @app.websocket("/ws/{client_id}")
 async def websocket_multiagent(websocket: WebSocket, client_id: str):
@@ -356,43 +369,46 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                     # Progress callback for real-time updates
                     async def progress_callback(progress_data):
                         nonlocal query_started_sent
-                        try:
-                            # Check if websocket is still connected before sending
-                            if websocket.client_state.name == "CONNECTED":
-                                # Deep research typed events (envelope: type, run_id, seq, phase, data)
-                                dr_types = (
-                                    "research_brief_ready",
-                                    "research_outline_ready",
-                                    "verifier_result",
-                                    "replan_started",
-                                    "deep_research_phase",
-                                    "subruns_merged",
-                                )
-                                if progress_data.get("type") in dr_types:
-                                    await websocket.send_json(progress_data)
-                                    return
-                                # If this is a graph_plan_ready message, send query_started first
-                                if progress_data.get("type") == "graph_plan_ready" and not query_started_sent:
-                                    logger.info(f"📋 Sending graph plan to frontend before execution starts")
-                                    await websocket.send_json({
-                                        "type": "query_started",
-                                        "query": query,
-                                        "data": {
-                                            "graph_plan": progress_data.get("graph_plan")
-                                        }
-                                    })
-                                    query_started_sent = True
-                                    return  # Don't send the graph_plan_ready as a node_progress
-                                
-                                # Send regular progress updates
-                                await websocket.send_json({
-                                    "type": "node_progress",
-                                    "data": progress_data
-                                })
-                                logger.debug(f"📤 Sent progress update: {progress_data.get('node_id')} - {progress_data.get('status')}")
-                        except Exception as e:
-                            # Log but don't fail if progress update fails
-                            logger.debug(f"⚠️ Progress update failed (client may have disconnected): {str(e)}")
+                        # Deep research typed events (envelope: type, run_id, seq, phase, data)
+                        dr_types = (
+                            "research_brief_ready",
+                            "research_outline_ready",
+                            "verifier_result",
+                            "replan_started",
+                            "deep_research_phase",
+                            "subruns_merged",
+                        )
+                        if progress_data.get("type") in dr_types:
+                            await _safe_multiagent_ws_send(websocket, progress_data)
+                            return
+                        # If this is a graph_plan_ready message, send query_started first
+                        if progress_data.get("type") == "graph_plan_ready" and not query_started_sent:
+                            logger.info(f"📋 Sending graph plan to frontend before execution starts")
+                            ok = await _safe_multiagent_ws_send(
+                                websocket,
+                                {
+                                    "type": "query_started",
+                                    "query": query,
+                                    "data": {
+                                        "graph_plan": progress_data.get("graph_plan")
+                                    },
+                                },
+                            )
+                            if ok:
+                                query_started_sent = True
+                            return  # Don't send the graph_plan_ready as a node_progress
+
+                        # Send regular progress updates
+                        await _safe_multiagent_ws_send(
+                            websocket,
+                            {
+                                "type": "node_progress",
+                                "data": progress_data,
+                            },
+                        )
+                        logger.debug(
+                            f"📤 Sent progress update: {progress_data.get('node_id')} - {progress_data.get('status')}"
+                        )
                     
                     # Process query through DynamicReasoningEngine with study context and trials
                     response = await reasoning_engine.process_dynamic_query(
@@ -409,7 +425,7 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                     
                     # Send query_started with graph plan if it wasn't sent during execution
                     # (this handles cases where progress_callback wasn't called with graph plan)
-                    if websocket.client_state.name == "CONNECTED" and not query_started_sent:
+                    if websocket.client_state == WebSocketState.CONNECTED and not query_started_sent:
                         logger.warning(f"⚠️ query_started not sent during execution, sending now")
                         graph_plan_dict = None
                         if hasattr(response, 'graph_plan') and response.graph_plan:
@@ -418,41 +434,45 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                             except:
                                 graph_plan_dict = response.graph_plan if isinstance(response.graph_plan, dict) else None
                         
-                        await websocket.send_json({
-                            "type": "query_started",
-                            "query": query,
-                            "data": {
-                                "graph_plan": graph_plan_dict
-                            }
-                        })
+                        await _safe_multiagent_ws_send(
+                            websocket,
+                            {
+                                "type": "query_started",
+                                "query": query,
+                                "data": {
+                                    "graph_plan": graph_plan_dict
+                                },
+                            },
+                        )
                     
                     # Send final response only if still connected
-                    if websocket.client_state.name == "CONNECTED":
-                        await websocket.send_json({
+                    if await _safe_multiagent_ws_send(
+                        websocket,
+                        {
                             "type": "query_completed",
                             "data": {
                                 "synthesis": response.synthesis.dict() if hasattr(response, 'synthesis') else {"answer": str(response)},
                                 "graph_plan": response.graph_plan.dict() if hasattr(response, 'graph_plan') and response.graph_plan else None,
                                 "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {}
-                            }
-                        })
+                            },
+                        },
+                    ):
                         logger.info(f"✅ Multi-agent query completed for {client_id}")
                     else:
-                        logger.warning(f"⚠️ Client {client_id} disconnected before query completion")
+                        logger.warning(f"⚠️ Client {client_id} disconnected before query completion (or send failed)")
                 
                 except Exception as e:
                     logger.error(f"❌ Error processing multi-agent query: {str(e)}")
-                    try:
-                        if websocket.client_state.name == "CONNECTED":
-                            await websocket.send_json({
-                                "type": "error",
-                                "error": str(e)
-                            })
-                    except:
-                        logger.debug(f"Could not send error to {client_id} - already disconnected")
+                    await _safe_multiagent_ws_send(
+                        websocket,
+                        {
+                            "type": "error",
+                            "error": str(e),
+                        },
+                    )
             
             elif query_type == "ping":
-                await websocket.send_json({"type": "pong"})
+                await _safe_multiagent_ws_send(websocket, {"type": "pong"})
     
     except WebSocketDisconnect:
         websocket_manager.disconnect(client_id)

@@ -367,6 +367,28 @@ async def search_ema_eu(query: str, max_results: int = 25) -> List[EmaSearchResu
                 )
             except Exception as ex:
                 logger.warning("EMA EU: fallback medicines search failed: %s", ex)
+
+        if not merged and intent == "pip" and fuse_terms:
+            # PIP intent often reflects procedural / legal questions (Reg 1901/2006, PDCO, waivers).
+            # The PIP JSON feed is product-level decisions; add guidance + non-EPAR when still empty.
+            try:
+                cap = max(6, min(max_results, 18))
+                fb_g, fb_n = await asyncio.gather(
+                    ema_json_index.search_guidance(fuse_terms, None, cap, company_terms),
+                    ema_json_index.search_non_epar_documents(
+                        fuse_terms, None, min(cap, 14), company_terms
+                    ),
+                )
+                before = len(merged)
+                append_rows(fb_g)
+                append_rows(fb_n)
+                logger.info(
+                    "EMA EU: pip intent fallback added %s row(s) from guidance/non-EPAR (terms=%r)",
+                    len(merged) - before,
+                    fuse_terms[:8],
+                )
+            except Exception as ex:
+                logger.warning("EMA EU: pip fallback guidance/non-epar failed: %s", ex)
     if not merged:
         logger.warning(
             "EMA EU: empty merged result (query=%r terms=%r intent=%s exceptions=%s/%s)",
