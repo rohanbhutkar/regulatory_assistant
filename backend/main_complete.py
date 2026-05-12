@@ -1,6 +1,6 @@
 """
 Complete FastAPI application with:
-1. All existing API routes (persona, assets, trials, commercial, data)
+1. All existing API routes (assets, trials, commercial, data)
 2. Full DynamicReasoningEngine with 16+ agents
 3. WebSocket for multi-agent research
 4. All original functionality preserved
@@ -73,7 +73,7 @@ def _slim_execution_trace_for_ws(trace, *, max_entries: int = 100):
 
 # Import existing API routes (do not import DynamicReasoningEngine here — that module
 # pulls the full agent graph and delays uvicorn bind; see _blocking_post_essential_startup.)
-from api import persona_routes, asset_routes, trial_routes, commercial_routes, data_routes, protocol_routes, analysis_routes, site_map_routes, cpp_routes, fmv_routes, insights_routes
+from api import asset_routes, trial_routes, commercial_routes, data_routes, protocol_routes, analysis_routes, site_map_routes, cpp_routes, fmv_routes, insights_routes
 from api import asset_strategy_routes, pricing_routes, hta_routes, financial_routes, scenario_routes, data_catalog_routes, asset_ai_routes, reporting_routes, payer_data_routes, regulatory_routes
 from api import chat_persistence_routes
 from api.chat_rate_limit import limiter
@@ -254,7 +254,6 @@ app.add_middleware(
 app.add_middleware(SlowAPIMiddleware)
 
 # Include ALL existing API routes
-app.include_router(persona_routes.router, prefix="/api/personas", tags=["personas"])
 app.include_router(asset_routes.router, prefix="/api/assets", tags=["assets"])
 app.include_router(asset_strategy_routes.router, prefix="/api/asset-strategy", tags=["asset-strategy"])
 app.include_router(pricing_routes.router, prefix="/api/asset-strategy/pricing", tags=["pricing"])

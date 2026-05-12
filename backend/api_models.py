@@ -1,28 +1,10 @@
 """
-Models for the existing API routes (persona, assets, trials, commercial)
+Models for the existing API routes (assets, trials, commercial)
 Separate from the multi-agent models to avoid conflicts
 """
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-
-# Persona Models
-class PersonaPermissions(BaseModel):
-    permissions: List[str]
-
-class Persona(BaseModel):
-    id: str
-    name: str
-    description: str
-    icon: str
-    permissions: List[str]
-    dashboard_route: str
-    features: List[str]
-
-class PersonaDashboard(BaseModel):
-    persona_id: str
-    widgets: List[Dict[str, Any]]
-    layout: Dict[str, Any]
 
 # Asset Models
 class Asset(BaseModel):

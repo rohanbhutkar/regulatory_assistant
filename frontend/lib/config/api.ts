@@ -6,9 +6,6 @@ export const API_CONFIG = {
 }
 
 export const ENDPOINTS = {
-  // Personas
-  personas: "/api/personas/",
-
   // Assets
   assets: "/api/assets/",
   assetDetail: (id: string) => `/api/assets/${id}`,

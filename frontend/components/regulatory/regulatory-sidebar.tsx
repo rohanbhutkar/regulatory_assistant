@@ -125,7 +125,7 @@ export function RegulatorySidebar({
     >
       <div className="shrink-0 px-2 pt-3 pb-2 border-b border-border/40">
         <Link
-          href="/regulatory-intelligence"
+          href="/"
           className="flex items-center gap-2.5 rounded-xl px-2 py-2 hover:bg-background/80 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-muted/30"
           aria-label="Lotor Lab — Regulatory intelligence home"
         >

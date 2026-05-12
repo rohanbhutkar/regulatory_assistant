@@ -705,7 +705,7 @@ export function useStudyDesigner() {
   return context
 }
 
-/** Safe on routes without StudyDesignerProvider (e.g. regulatory-intelligence, research). */
+/** Safe on routes without StudyDesignerProvider (e.g. home `/`, research). */
 export function useStudyDesignerOptional(): StudyDesignerContextType | undefined {
   return useContext(StudyDesignerContext)
 }
