@@ -260,6 +260,19 @@ jobs:
             --from-literal=AACT_DB_USERNAME="${AACT_DB_USERNAME:-}" \
             --from-literal=AACT_DB_PASSWORD="${AACT_DB_PASSWORD:-}"
 
+          # Fargate quota is tight in dev. Stop the large backend before applying
+          # the new manifest so old backend capacity is released before replacement.
+          if kubectl get deployment regulatory-backend -n regulatory-dev >/dev/null 2>&1; then
+            echo "Scaling regulatory-backend to 0 to release Fargate vCPU before deploy..."
+            kubectl scale deployment/regulatory-backend -n regulatory-dev --replicas=0
+            kubectl wait --for=delete pod \
+              -n regulatory-dev \
+              -l app.kubernetes.io/name=regulatory-backend \
+              --timeout=10m || true
+            echo "Waiting for Fargate quota accounting to release backend capacity..."
+            sleep 90
+          fi
+
           python - <<'PY'
           import os
           from pathlib import Path
@@ -281,8 +294,9 @@ jobs:
           Path("/tmp/regulatory-app.yaml").write_text(manifest)
           PY
           kubectl apply -f /tmp/regulatory-app.yaml
-          # Clear ProgressDeadlineExceeded / stuck ReplicaSets when apply is a no-op but pods are unhealthy.
-          kubectl rollout restart deployment/regulatory-backend deployment/regulatory-frontend -n regulatory-dev
+          # Backend was already intentionally restarted via scale-to-zero above.
+          # Keep frontend restart for the rare no-op apply / stale pod case; it is small.
+          kubectl rollout restart deployment/regulatory-frontend -n regulatory-dev
           fail=0
           kubectl rollout status deployment/regulatory-backend -n regulatory-dev --timeout=42m || fail=1
           kubectl rollout status deployment/regulatory-frontend -n regulatory-dev --timeout=30m || fail=1
