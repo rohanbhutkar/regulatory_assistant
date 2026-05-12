@@ -1253,7 +1253,5 @@ class SiteTroveAgent:
         
         return risks
 
-# Create global instance
+# Create global instance (single copy — site_df + trial_site_df are large)
 site_trove_agent = SiteTroveAgent()
-
-site_trove_agent =  SiteTroveAgent()

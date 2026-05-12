@@ -1225,7 +1225,6 @@ class ClaimsDataAgent:
         except:
             return {'lat': 39.8283, 'lng': -98.5795}  # Default to center of US
 
-# Create global instance
+# Create global instance (single copy — full combined_claims is multi-GB in RAM)
 claims_data_agent = ClaimsDataAgent()
-claims_data_agent =  ClaimsDataAgent()
 

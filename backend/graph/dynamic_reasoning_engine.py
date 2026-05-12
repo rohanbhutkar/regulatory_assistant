@@ -5459,6 +5459,5 @@ The underlying data is available and the system is functioning correctly - the l
             return truncated_summaries
 
 
-
-# Global dynamic reasoning engine instance
-dynamic_reasoning_engine = DynamicReasoningEngine() 
+# No eager global engine: importing this module already loads heavy agent singletons.
+# The app sets `reasoning_engine` in main_complete after data is ready (see lifespan).

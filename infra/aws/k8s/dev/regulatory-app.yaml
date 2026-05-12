@@ -48,7 +48,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: 512Mi
+            sizeLimit: 2Gi
       containers:
         - name: backend
           image: ${BACKEND_IMAGE_URI}
@@ -108,15 +108,22 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 120
+          # Fargate: requests and limits must match; only certain vCPU/memory pairs are valid.
+          # Memory budget (from runtime logs + code paths):
+          # - claims/combined_claims.csv ~2.9M rows (ClaimsDataAgent): wide pandas frame + diagnosis ref
+          # - SiteTrove: ~40k sites + ~2.8M trial-site edges (derived DataFrame)
+          # - PayerDataAgent: multiple dimension CSVs at import
+          # - OptimizedDataLoader (background): TrialTrove/SiteTrove/claims sample/FDA overlap with agents
+          # - DynamicReasoningEngine + Python/pandas peak during S3 CSV parse (often >1x file size briefly)
+          # Duplicate agent singletons were removed (was ~2x claims + ~2x site RAM). 30Gi is the 4-vCPU
+          # Fargate ceiling; use it until lazy-loading deduplicates loader vs agents further.
           resources:
             requests:
-              cpu: 500m
-              memory: 2Gi
-              ephemeral-storage: 1Gi
+              cpu: "4"
+              memory: 30Gi
             limits:
-              cpu: "2"
-              memory: 8Gi
-              ephemeral-storage: 4Gi
+              cpu: "4"
+              memory: 30Gi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
