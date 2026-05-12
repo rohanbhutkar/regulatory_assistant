@@ -9,7 +9,6 @@ import {
   Bot, 
   User, 
   Loader2, 
-  Copy, 
   ThumbsUp, 
   ThumbsDown,
   MoreVertical,
@@ -201,11 +200,6 @@ export function ChatInterface({
     }
   }
 
-  const copyToClipboard = (content: string) => {
-    navigator.clipboard.writeText(content)
-    toast.success('Copied to clipboard')
-  }
-
   const deleteMessage = (messageId: string) => {
     setMessages(prev => prev.filter(msg => msg.id !== messageId))
     toast.success('Message deleted')
@@ -308,20 +302,17 @@ export function ChatInterface({
                 ) : (
                   <>
                     <div className="whitespace-pre-wrap">{message.content}</div>
+                    {message.role === 'assistant' && (
+                      <p className="mt-2 pt-2 border-t border-gray-200 text-[11px] leading-snug text-gray-500">
+                        This is a proof-of-concept response from a Lotor Lab agent
+                      </p>
+                    )}
                     <div className={cn(
                       "text-xs mt-1 flex items-center justify-between",
                       message.role === 'user' ? 'text-blue-100' : 'text-gray-500'
                     )}>
                       <span>{formatTime(message.timestamp)}</span>
                       <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="w-6 h-6"
-                          onClick={() => copyToClipboard(message.content)}
-                        >
-                          <Copy className="w-3 h-3" />
-                        </Button>
                         {message.role === 'user' && (
                           <>
                             <Button

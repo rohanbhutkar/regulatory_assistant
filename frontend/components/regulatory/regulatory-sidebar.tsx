@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import Link from "next/link"
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu"
 import {
@@ -61,8 +61,8 @@ interface RegulatorySidebarProps {
   onSettingsOpenChange: (value: boolean) => void
   onClearAllData: () => void
   className?: string
-  /** When set, show a small loading indicator on that session row (research in flight). */
-  pendingResearchSessionId?: string | null
+  /** Session ids with an assistant reply still streaming / in progress (multiple allowed). */
+  pendingResearchSessionIds?: readonly string[]
 }
 
 export function RegulatorySidebar({
@@ -84,10 +84,14 @@ export function RegulatorySidebar({
   onSettingsOpenChange,
   onClearAllData,
   className,
-  pendingResearchSessionId,
+  pendingResearchSessionIds,
 }: RegulatorySidebarProps) {
   const sessionList = sessions ?? []
   const visibleList = visibleSessions ?? []
+  const pendingResearchSet = useMemo(
+    () => new Set(pendingResearchSessionIds ?? []),
+    [pendingResearchSessionIds],
+  )
 
   const [chatsExpanded, setChatsExpanded] = useState(false)
   const [brandLogoFailed, setBrandLogoFailed] = useState(false)
@@ -212,7 +216,7 @@ export function RegulatorySidebar({
               displayedChats.map((s) => {
                 const label = sessionDisplayTitle(s)
                 const isActive = s.id === activeSessionId
-                const isPending = pendingResearchSessionId === s.id
+                const isPending = pendingResearchSet.has(s.id)
 
                 return (
                   <div

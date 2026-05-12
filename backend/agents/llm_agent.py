@@ -689,9 +689,10 @@ INSTRUCTIONS:
 1. **Prioritize depth** — specific facts, numbers, phases, endpoints, populations, and protocol detail wherever the data supports them. Do not shorten for brevity.
 2. **Citations** — every substantive claim should reference identifiers from the data. In the JSON **citations** array, use objects **{{"text": "short label", "url": "https://..."}}** whenever a URL exists in the data; use **https://clinicaltrials.gov/study/NCTxxxxxxxx** for trials and **https://pubmed.ncbi.nlm.nih.gov/PMID/** for publications. Plain strings are allowed only when no URL is available.
 3. **Quotes** — include short verbatim quotes with attribution when the source text is high-value (endpoints, eligibility, regulatory wording).
-4. Provide a **direct** answer first, then supporting detail, tables, and comparisons as needed.
-5. Write the "answer" and all user-facing text in **English**; translate non-English sources faithfully (keep official foreign titles in parentheses when helpful).
-6. Return ONLY the JSON object, no other text or formatting.
+4. Provide a **direct** answer first, then supporting detail, tables, and comparisons as needed. In the main body, avoid long generic caveat paragraphs; only note a limitation inline when it changes how to read a specific claim.
+5. End the **answer** string with a final subsection titled exactly `## Data quality and limitations` — at most **2–4 short sentences** OR **up to 4 bullet points** (not both). State coverage gaps, truncation/windowing if evident from the data, and overall confidence tersely. Do not repeat the same caveats from the body unless one clause is needed for clarity.
+6. Write the "answer" and all user-facing text in **English**; translate non-English sources faithfully (keep official foreign titles in parentheses when helpful).
+7. Return ONLY the JSON object, no other text or formatting.
 
 DATE CONTEXT:
 - Use the current date above for "recent", "latest", and similar terms.
@@ -700,13 +701,13 @@ Return ONLY valid JSON
 
 JSON Response:
 {{
-    "answer": "Long, evidence-dense answer: cite NCT/PMID/URL inline; use quotes where appropriate; tables for comparisons. No artificial length limit in prose—use the space needed.",
+    "answer": "Long, evidence-dense answer: cite NCT/PMID/URL inline; use quotes where appropriate; tables for comparisons. Must end with ## Data quality and limitations (2–4 sentences or ≤4 bullets only).",
     "citations": [
         {{"text": "NCT01234567: trial title", "url": "https://clinicaltrials.gov/study/NCT01234567"}},
         {{"text": "Source title", "url": "https://example.gov/guidance"}}
     ],
     "confidence": "high|medium|low",
-    "data_quality": "Brief assessment of data quality and completeness"
+    "data_quality": "One concise sentence (≤30 words): mirror the final Data quality section; no duplication of the full answer."
 }}
 
 ORIGINAL QUESTION: {query}
@@ -726,7 +727,7 @@ DATA FOUND:
 
             response = await self.generate_structured_response(
                 synthesis_prompt,
-                system_prompt="You are an expert clinical research analyst. Provide detailed, citation-heavy, quote-backed answers in English. Prefer evidence over summary; do not artificially shorten.",
+                system_prompt="You are an expert clinical research analyst. Provide detailed, citation-heavy, quote-backed answers in English. Prefer evidence over summary; do not artificially shorten. Put routine coverage and completeness notes only in the final ## Data quality and limitations section of the answer (short, per user instructions).",
                 max_tokens=getattr(settings, "SYNTHESIS_MAX_TOKENS", self.max_tokens),
             )
 

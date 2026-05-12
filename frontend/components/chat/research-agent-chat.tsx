@@ -16,7 +16,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import type { Message } from "@/lib/types/chat-types"
-import { ChevronLeft, ChevronRight, Download, Trash2, Square, Terminal, User } from "lucide-react"
+import { ChevronLeft, ChevronRight, Trash2, Square, Terminal, User } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
@@ -226,8 +226,8 @@ export interface ResearchAgentChatProps {
   onSessionActivity?: (payload: { sessionId: string; title: string; messageCount: number }) => void
   /** When true with variant regulatory, messages load/save via /api/chat (Postgres). */
   remotePersistence?: boolean
-  /** Fired when a research request starts (session id) or ends (null) for sidebar pending UI. */
-  onResearchPendingSessionChange?: (sessionId: string | null) => void
+  /** Regulatory: notify parent when this session’s assistant run starts or finishes (supports multiple concurrent sessions). */
+  onResearchRunChange?: (sessionId: string, running: boolean) => void
   /** When set with enterprise + sessionId, header delete confirms via sidebar API instead of clearing local state only. */
   onConfirmDeleteSession?: (sessionId: string) => void | Promise<void>
 }
@@ -254,7 +254,7 @@ export function ResearchAgentChat({
   sessionId,
   onSessionActivity,
   remotePersistence = false,
-  onResearchPendingSessionChange,
+  onResearchRunChange,
   onConfirmDeleteSession,
 }: ResearchAgentChatProps) {
   const backendLogs = useBackendLogs()
@@ -337,7 +337,6 @@ export function ResearchAgentChat({
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const progressStripRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  const loadingSessionRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!remotePersistence || variant !== "regulatory" || !sessionId) return
@@ -366,13 +365,25 @@ export function ResearchAgentChat({
   }, [sessionId, remotePersistence, variant])
 
   useEffect(() => {
-    if (!remotePersistence || variant !== "regulatory" || !onResearchPendingSessionChange) return
-    if (isLoading && loadingSessionRef.current) {
-      onResearchPendingSessionChange(loadingSessionRef.current)
-    } else {
-      onResearchPendingSessionChange(null)
+    if (variant !== "regulatory" || !sessionId || !onResearchRunChange) return
+    onResearchRunChange(sessionId, isLoading)
+    return () => {
+      onResearchRunChange(sessionId, false)
     }
-  }, [isLoading, remotePersistence, variant, onResearchPendingSessionChange])
+  }, [variant, sessionId, isLoading, onResearchRunChange])
+
+  useEffect(() => {
+    return () => {
+      const w = wsRef.current
+      if (!w) return
+      const ping = (w as { pingInterval?: ReturnType<typeof setInterval> }).pingInterval
+      if (ping) clearInterval(ping)
+      if (w.readyState === WebSocket.OPEN || w.readyState === WebSocket.CONNECTING) {
+        w.close()
+      }
+      wsRef.current = null
+    }
+  }, [sessionId])
 
   useEffect(() => {
     const n = deepResearchTimeline.length
@@ -443,7 +454,6 @@ export function ResearchAgentChat({
   ) => {
     const skipUserMessage = options?.skipUserMessage ?? false
     const turnSessionId = sessionId ?? ""
-    loadingSessionRef.current = null
 
     const userPersistId =
       remotePersistence && variant === "regulatory" && turnSessionId && !skipUserMessage
@@ -491,7 +501,6 @@ export function ResearchAgentChat({
       conversationBase = [...messages, userMessage]
       setMessages(conversationBase)
     }
-    loadingSessionRef.current = turnSessionId || null
     setIsLoading(true)
     abortResearchRef.current = false
 
@@ -1424,21 +1433,6 @@ export function ResearchAgentChat({
     }
   }
 
-  const handleExportChat = () => {
-    const chatText = messages
-      .map(
-        (msg) => `[${msg.timestamp.toLocaleString()}] ${msg.role === "user" ? "You" : msg.agentName}: ${msg.content}`,
-      )
-      .join("\n\n")
-
-    const blob = new Blob([chatText], { type: "text/plain" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `chat-export-${Date.now()}.txt`
-    a.click()
-  }
-
   const isEnterprise = presentation === "enterprise"
 
   const bubbleAppearance = isEnterprise ? "enterprise" : "default"
@@ -1459,9 +1453,6 @@ export function ResearchAgentChat({
             </Badge>
           </div>
           <div className="flex items-center gap-0.5 relative">
-            <Button variant="ghost" size="icon" onClick={handleExportChat} className="h-9 w-9 rounded-full" title="Export chat">
-              <Download className="h-4 w-4" />
-            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -1497,9 +1488,6 @@ export function ResearchAgentChat({
                 Stop
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={handleExportChat} className="h-8 w-8">
-              <Download className="h-3.5 w-3.5" />
-            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -1617,7 +1605,6 @@ export function ResearchAgentChat({
                   key={message.id}
                   message={message}
                   appearance={bubbleAppearance}
-                  showAssistantActions={message.role === "assistant" && message.id !== "welcome"}
                   onRegenerate={isLastAssistant ? () => handleRegenerateAssistant(idx) : undefined}
                 />
               )

@@ -5,6 +5,7 @@ import type { SetStateAction } from "react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { flushSync } from "react-dom"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 import { RegulatorySidebar } from "@/components/regulatory/regulatory-sidebar"
 import {
   chatStorageKey,
@@ -49,7 +50,7 @@ function RegulatoryIntelligenceRemote() {
   const [activeSessionId, setActiveSessionId] = useState("")
   const [ready, setReady] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
-  const [pendingResearchSessionId, setPendingResearchSessionId] = useState<string | null>(null)
+  const [pendingResearchIds, setPendingResearchIds] = useState<Set<string>>(() => new Set())
   const [starredOnly, setStarredOnly] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
@@ -105,6 +106,22 @@ function RegulatoryIntelligenceRemote() {
     return list
   }, [sessions, starredOnly, searchQuery])
 
+  const onResearchRunChange = useCallback((sessionId: string, running: boolean) => {
+    setPendingResearchIds((prev) => {
+      const next = new Set(prev)
+      if (running) next.add(sessionId)
+      else next.delete(sessionId)
+      return next
+    })
+  }, [])
+
+  const mountedChatSessionIds = useMemo(() => {
+    const m = new Set<string>()
+    if (activeSessionId) m.add(activeSessionId)
+    pendingResearchIds.forEach((id) => m.add(id))
+    return Array.from(m)
+  }, [activeSessionId, pendingResearchIds])
+
   const onNewChat = useCallback(async () => {
     try {
       const created = await chatCreateSession({ title: "New chat" })
@@ -128,6 +145,11 @@ function RegulatoryIntelligenceRemote() {
         toast.error(e instanceof Error ? e.message : String(e))
         return
       }
+      setPendingResearchIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       const remaining = sessions.filter((s) => s.id !== id)
       if (remaining.length === 0) {
         try {
@@ -203,6 +225,7 @@ function RegulatoryIntelligenceRemote() {
       const created = await chatCreateSession({ title: "New chat" })
       setSessions([created])
       setActiveSessionId(created.id)
+      setPendingResearchIds(new Set())
       setStarredOnly(false)
       setSearchQuery("")
       setSearchPanelOpen(false)
@@ -262,25 +285,36 @@ function RegulatoryIntelligenceRemote() {
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
         onClearAllData={() => void onClearAllData()}
-        pendingResearchSessionId={pendingResearchSessionId}
+        pendingResearchSessionIds={Array.from(pendingResearchIds)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <ResearchAgentChat
-          variant="regulatory"
-          presentation="enterprise"
-          sessionId={activeSessionId}
-          onSessionActivity={onSessionActivity}
-          welcomeAgentName="Regulatory Assistant"
-          welcomeAgentType="regulatory"
-          inputPlaceholder="Ask for requirements, gaps, or summaries from your uploaded context…"
-          enableDocumentContext
-          persistHistory={false}
-          remotePersistence
-          onResearchPendingSessionChange={setPendingResearchSessionId}
-          onConfirmDeleteSession={onDeleteSession}
-          fileAccept=".pdf,.docx,.txt,.csv"
-        />
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {mountedChatSessionIds.map((chatSessionId) => (
+          <div
+            key={chatSessionId}
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#fafafa] dark:bg-background",
+              chatSessionId === activeSessionId ? "z-10 visible" : "z-0 invisible pointer-events-none",
+            )}
+            aria-hidden={chatSessionId !== activeSessionId}
+          >
+            <ResearchAgentChat
+              variant="regulatory"
+              presentation="enterprise"
+              sessionId={chatSessionId}
+              onSessionActivity={onSessionActivity}
+              welcomeAgentName="Regulatory Assistant"
+              welcomeAgentType="regulatory"
+              inputPlaceholder="Ask for requirements, gaps, or summaries from your uploaded context…"
+              enableDocumentContext
+              persistHistory={false}
+              remotePersistence
+              onResearchRunChange={onResearchRunChange}
+              onConfirmDeleteSession={onDeleteSession}
+              fileAccept=".pdf,.docx,.txt,.csv"
+            />
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -313,6 +347,7 @@ export default function RegulatoryIntelligencePage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [searchPanelOpen, setSearchPanelOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [pendingResearchIds, setPendingResearchIds] = useState<Set<string>>(() => new Set())
 
   const setSessions = useCallback((updater: SetStateAction<RegulatorySessionMeta[]>) => {
     const prev = loadSessionIndex()
@@ -333,6 +368,22 @@ export default function RegulatoryIntelligencePage() {
     return list
   }, [sessions, starredOnly, searchQuery])
 
+  const onResearchRunChange = useCallback((sessionId: string, running: boolean) => {
+    setPendingResearchIds((prev) => {
+      const next = new Set(prev)
+      if (running) next.add(sessionId)
+      else next.delete(sessionId)
+      return next
+    })
+  }, [])
+
+  const mountedChatSessionIds = useMemo(() => {
+    const m = new Set<string>()
+    if (activeSessionId) m.add(activeSessionId)
+    pendingResearchIds.forEach((id) => m.add(id))
+    return Array.from(m)
+  }, [activeSessionId, pendingResearchIds])
+
   const onNewChat = useCallback(() => {
     const id = crypto.randomUUID()
     const next: RegulatorySessionMeta = { id, title: "New chat", updatedAt: Date.now() }
@@ -351,6 +402,11 @@ export default function RegulatoryIntelligencePage() {
   const onDeleteSession = useCallback(
     (id: string) => {
       removeChatPayload(id)
+      setPendingResearchIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
       let nextFirstId = ""
       flushSync(() => {
         setSessions((prev) => {
@@ -406,6 +462,7 @@ export default function RegulatoryIntelligencePage() {
     const id = crypto.randomUUID()
     saveSessionIndex([{ id, title: "New chat", updatedAt: Date.now() }])
     setActiveSessionId(id)
+    setPendingResearchIds(new Set())
     setStarredOnly(false)
     setSearchQuery("")
     setSearchPanelOpen(false)
@@ -439,23 +496,36 @@ export default function RegulatoryIntelligencePage() {
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
         onClearAllData={onClearAllData}
+        pendingResearchSessionIds={Array.from(pendingResearchIds)}
       />
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <ResearchAgentChat
-          variant="regulatory"
-          presentation="enterprise"
-          sessionId={activeSessionId}
-          onSessionActivity={onSessionActivity}
-          welcomeAgentName="Regulatory Assistant"
-          welcomeAgentType="regulatory"
-          inputPlaceholder="Ask for requirements, gaps, or summaries from your uploaded context…"
-          enableDocumentContext
-          persistHistory
-          storageKey={chatStorageKey(activeSessionId)}
-          onConfirmDeleteSession={onDeleteSession}
-          fileAccept=".pdf,.docx,.txt,.csv"
-        />
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {mountedChatSessionIds.map((chatSessionId) => (
+          <div
+            key={chatSessionId}
+            className={cn(
+              "absolute inset-0 flex min-h-0 min-w-0 flex-col overflow-hidden bg-[#fafafa] dark:bg-background",
+              chatSessionId === activeSessionId ? "z-10 visible" : "z-0 invisible pointer-events-none",
+            )}
+            aria-hidden={chatSessionId !== activeSessionId}
+          >
+            <ResearchAgentChat
+              variant="regulatory"
+              presentation="enterprise"
+              sessionId={chatSessionId}
+              onSessionActivity={onSessionActivity}
+              welcomeAgentName="Regulatory Assistant"
+              welcomeAgentType="regulatory"
+              inputPlaceholder="Ask for requirements, gaps, or summaries from your uploaded context…"
+              enableDocumentContext
+              persistHistory
+              storageKey={chatStorageKey(chatSessionId)}
+              onResearchRunChange={onResearchRunChange}
+              onConfirmDeleteSession={onDeleteSession}
+              fileAccept=".pdf,.docx,.txt,.csv"
+            />
+          </div>
+        ))}
       </div>
     </div>
   )

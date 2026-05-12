@@ -3,16 +3,16 @@
 import { cn } from "@/lib/utils"
 import type { Message } from "@/lib/types/chat-types"
 import { normalizeChatCitations } from "@/lib/chat-citations"
-import { User, Bot, FileText, ExternalLink, Copy, RotateCcw } from "lucide-react"
-import { toast } from "sonner"
+import { User, Bot, FileText, ExternalLink, RotateCcw } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
+const LOTOR_POC_DISCLAIMER = "This is a proof-of-concept response from a Lotor Lab agent"
+
 interface MessageBubbleProps {
   message: Message
-  showAssistantActions?: boolean
   onRegenerate?: () => void
   /** Gemini-style: assistant text on canvas; user in soft pill */
   appearance?: "default" | "enterprise"
@@ -20,7 +20,6 @@ interface MessageBubbleProps {
 
 export function MessageBubble({
   message,
-  showAssistantActions,
   onRegenerate,
   appearance = "default",
 }: MessageBubbleProps) {
@@ -141,39 +140,25 @@ export function MessageBubble({
               {message.content}
             </ReactMarkdown>
           </div>
+          {!isUser && (
+            <p className="not-prose mt-2 text-[11px] leading-snug text-muted-foreground border-t border-border/40 pt-2">
+              {LOTOR_POC_DISCLAIMER}
+            </p>
+          )}
         </div>
 
-        {!isUser && showAssistantActions && (
+        {!isUser && onRegenerate && (
           <div className="flex items-center gap-1 mt-1">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-xs text-muted-foreground"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(message.content)
-                  toast.success("Copied to clipboard")
-                } catch {
-                  toast.error("Could not copy")
-                }
-              }}
+              onClick={onRegenerate}
             >
-              <Copy className="h-3 w-3 mr-1" />
-              Copy
+              <RotateCcw className="h-3 w-3 mr-1" />
+              Regenerate
             </Button>
-            {onRegenerate && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs text-muted-foreground"
-                onClick={onRegenerate}
-              >
-                <RotateCcw className="h-3 w-3 mr-1" />
-                Regenerate
-              </Button>
-            )}
           </div>
         )}
 
