@@ -86,6 +86,11 @@ const nextConfig = {
     ];
   },
   
+  // Legacy /favicon.ico requests → same asset as tab icon
+  async redirects() {
+    return [{ source: "/favicon.ico", destination: "/lotor-lab-logo.png", permanent: false }]
+  },
+
   /** Proxy /api/chat to FastAPI (SSR or local). Prefer NEXT_PUBLIC_CHAT_RELATIVE for same-origin cookies in dev. */
   async rewrites() {
     if (process.env.NEXT_PUBLIC_CHAT_RELATIVE === "true") {

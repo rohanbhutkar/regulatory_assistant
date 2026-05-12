@@ -13,6 +13,10 @@ export const metadata: Metadata = {
   title: "Regulatory Assistant",
   description:
     "Evidence-led regulatory research: FDA, EMA, China agencies, trials, literature, and more.",
+  icons: {
+    icon: "/lotor-lab-logo.png",
+    apple: "/lotor-lab-logo.png",
+  },
 }
 
 export default function RootLayout({

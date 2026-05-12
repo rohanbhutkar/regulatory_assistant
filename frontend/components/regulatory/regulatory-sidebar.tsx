@@ -197,8 +197,8 @@ export function RegulatorySidebar({
         <div className="px-3 pt-2 pb-1 shrink-0">
           <p className="px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
         </div>
-        <ScrollArea className="flex-1 px-2 min-h-0">
-        <div className="space-y-0.5 pr-2 pb-3">
+        <ScrollArea className="flex-1 min-h-0 min-w-0 px-2">
+        <div className="min-w-0 space-y-0.5 pr-2 pb-3">
           {displayedChats.length === 0 ? (
             <p className="px-2 py-6 text-xs text-muted-foreground text-center leading-relaxed">
               {sessionList.length === 0
@@ -207,10 +207,10 @@ export function RegulatorySidebar({
             </p>
           ) : (
             displayedChats.map((s) => (
-              <div key={s.id} className="relative group/item">
+              <div key={s.id} className="relative group/item min-w-0">
                 <div
                   className={cn(
-                    "w-full flex min-w-0 items-center gap-0.5 overflow-hidden rounded-xl pl-2 pr-1 py-1.5 text-left text-sm transition-colors",
+                    "flex w-full min-w-0 max-w-full items-center gap-1 overflow-hidden rounded-xl pl-2 pr-1 py-1.5 text-left text-sm transition-colors",
                     s.id === activeSessionId
                       ? "bg-[#d3e3fd]/80 dark:bg-primary/20 text-foreground"
                       : "hover:bg-background/80",
@@ -218,51 +218,53 @@ export function RegulatorySidebar({
                 >
                   <button
                     type="button"
-                    className="min-w-0 flex-1 truncate py-1 pl-0 pr-1 text-left font-medium rounded-lg"
+                    className="min-w-0 flex-1 overflow-hidden py-1 pl-0 pr-0.5 text-left font-medium rounded-lg"
                     onClick={() => onSelectSession(s.id)}
                     title={s.title}
                   >
-                    {s.title}
+                    <span className="block truncate">{s.title}</span>
                   </button>
-                  {pendingResearchSessionId === s.id && (
-                    <Loader2
-                      className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
-                      aria-label="Reply in progress"
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="shrink-0 p-1.5 rounded-md hover:bg-background/60"
-                    aria-label={s.starred ? "Unstar" : "Star chat"}
-                    onClick={() => onToggleStar(s.id)}
-                  >
-                    <Star
-                      className={cn(
-                        "h-3.5 w-3.5",
-                        s.starred ? "fill-amber-400 text-amber-500" : "text-muted-foreground/40",
-                      )}
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-100 sm:opacity-0 sm:group-hover/item:opacity-100 focus-visible:opacity-100 transition-opacity"
-                    aria-label="Delete chat"
-                    title="Delete chat"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteId(s.id)
-                    }}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    className="shrink-0 p-1.5 rounded-md opacity-70 hover:opacity-100 hover:bg-background/60"
-                    aria-label="Chat actions"
-                    onClick={() => setMenuOpenId(menuOpenId === s.id ? null : s.id)}
-                  >
-                    <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-                  </button>
+                  <div className="flex shrink-0 items-center gap-0">
+                    {pendingResearchSessionId === s.id && (
+                      <Loader2
+                        className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+                        aria-label="Reply in progress"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      className="shrink-0 p-1.5 rounded-md hover:bg-background/60"
+                      aria-label={s.starred ? "Unstar" : "Star chat"}
+                      onClick={() => onToggleStar(s.id)}
+                    >
+                      <Star
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          s.starred ? "fill-amber-400 text-amber-500" : "text-muted-foreground/40",
+                        )}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      aria-label="Delete chat"
+                      title="Delete chat"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteId(s.id)
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="shrink-0 p-1.5 rounded-md opacity-70 hover:opacity-100 hover:bg-background/60"
+                      aria-label="Chat actions"
+                      onClick={() => setMenuOpenId(menuOpenId === s.id ? null : s.id)}
+                    >
+                      <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  </div>
                 </div>
                 {menuOpenId === s.id && (
                   <>
