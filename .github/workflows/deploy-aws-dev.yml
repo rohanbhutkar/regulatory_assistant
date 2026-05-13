@@ -387,5 +387,61 @@ jobs:
       - name: Smoke tests
         if: steps.certs.outputs.issued == 'true' && inputs.run_smoke_tests == 'true'
         run: |
-          curl -fsS -H "Authorization: $DEV_BASIC_AUTH_HEADER" "https://$DEV_DOMAIN_NAME/alb-health"
-          curl -fsS -H "Authorization: $DEV_BASIC_AUTH_HEADER" "https://$DEV_DOMAIN_NAME/health" | head -c 400
+          # `kubectl rollout status` only waits for the K8s readiness probe; the ALB target
+          # group still needs its own consecutive healthy checks (default ~3×15s) before
+          # /alb-health stops returning 503 through CloudFront. Retry with backoff and
+          # treat any 2xx as success.
+          smoke() {
+            local path="$1"
+            local url="https://$DEV_DOMAIN_NAME$path"
+            local attempts="${2:-30}"
+            local delay="${3:-15}"
+            local i status body
+            for i in $(seq 1 "$attempts"); do
+              body="$(mktemp)"
+              status="$(curl -sS -o "$body" -w '%{http_code}' \
+                -H "Authorization: $DEV_BASIC_AUTH_HEADER" \
+                --max-time 30 "$url" || echo 000)"
+              if [ "$status" -ge 200 ] && [ "$status" -lt 300 ]; then
+                echo "✅ $path → $status (attempt $i)"
+                head -c 400 "$body" || true
+                echo
+                rm -f "$body"
+                return 0
+              fi
+              echo "… $path → $status (attempt $i/$attempts); retrying in ${delay}s"
+              head -c 200 "$body" || true
+              echo
+              rm -f "$body"
+              sleep "$delay"
+            done
+            echo "::error::Smoke test failed for $path after $attempts attempts"
+            return 1
+          }
+
+          fail=0
+          smoke /alb-health 30 15 || fail=1
+          smoke /health 6 10 || fail=1
+
+          if [ "$fail" != "0" ]; then
+            echo "=== ingress status ==="
+            kubectl get ingress -n regulatory-dev -o wide || true
+            echo "=== backend pods ==="
+            kubectl get pods -n regulatory-dev -l app.kubernetes.io/name=regulatory-backend -o wide || true
+            echo "=== ALB target health ==="
+            ALB_ARN="$(aws elbv2 describe-load-balancers --region "$APP_AWS_REGION" \
+              --query "LoadBalancers[?contains(LoadBalancerName, 'lotor-regulatory-dev')].LoadBalancerArn | [0]" \
+              --output text 2>/dev/null || true)"
+            if [ -n "$ALB_ARN" ] && [ "$ALB_ARN" != "None" ]; then
+              for tg in $(aws elbv2 describe-target-groups --region "$APP_AWS_REGION" \
+                --load-balancer-arn "$ALB_ARN" \
+                --query "TargetGroups[].TargetGroupArn" --output text); do
+                echo "--- target group: $tg ---"
+                aws elbv2 describe-target-health --region "$APP_AWS_REGION" \
+                  --target-group-arn "$tg" \
+                  --query "TargetHealthDescriptions[].{Id:Target.Id,State:TargetHealth.State,Reason:TargetHealth.Reason,Desc:TargetHealth.Description}" \
+                  --output table || true
+              done
+            fi
+            exit 1
+          fi
