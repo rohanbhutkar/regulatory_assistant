@@ -293,7 +293,13 @@ export interface ResearchAgentChatProps {
   presentation?: "default" | "enterprise"
   /** When set with onSessionActivity, syncs chat title with multi-session sidebar */
   sessionId?: string
-  onSessionActivity?: (payload: { sessionId: string; title: string; messageCount: number }) => void
+  onSessionActivity?: (payload: {
+    sessionId: string
+    title: string
+    messageCount: number
+    bumpOrder?: boolean
+    lastMessageAt?: number
+  }) => void
   /** When true with variant regulatory, messages load/save via /api/chat (Postgres). */
   remotePersistence?: boolean
   /** Regulatory: notify parent when this session’s assistant run starts or finishes (supports multiple concurrent sessions). */
@@ -409,14 +415,26 @@ export function ResearchAgentChat({
   const queryStepsRef = useRef<QueryStep[]>([])
   const deepResearchTimelineRef = useRef<DeepResearchTimelineEntry[]>([])
   const [sessionDeleteDialogOpen, setSessionDeleteDialogOpen] = useState(false)
+  /** Remote regulatory: block sidebar activity until history fetch finishes (avoids reorder on tab open). */
+  const [regulatoryHistoryReady, setRegulatoryHistoryReady] = useState(
+    () => !(remotePersistence && variant === "regulatory"),
+  )
+  const sessionActivityBaselineLenRef = useRef<number | null>(null)
+  const sessionActivityBaselineLastTsRef = useRef<number | null>(null)
   const abortResearchRef = useRef(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const progressStripRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
-    if (!remotePersistence || variant !== "regulatory" || !sessionId) return
+    if (!remotePersistence || variant !== "regulatory" || !sessionId) {
+      setRegulatoryHistoryReady(true)
+      return
+    }
     const ac = new AbortController()
+    setRegulatoryHistoryReady(false)
+    sessionActivityBaselineLenRef.current = null
+    sessionActivityBaselineLastTsRef.current = null
     ;(async () => {
       try {
         const rows = await chatListMessages(sessionId)
@@ -435,6 +453,8 @@ export function ResearchAgentChat({
           description: e instanceof Error ? e.message : String(e),
         })
         setMessages([])
+      } finally {
+        if (!ac.signal.aborted) setRegulatoryHistoryReady(true)
       }
     })()
     return () => ac.abort()
@@ -506,12 +526,58 @@ export function ResearchAgentChat({
 
   useEffect(() => {
     if (!sessionId || !onSessionActivity) return
+    if (remotePersistence && variant === "regulatory" && !regulatoryHistoryReady) return
+
+    const len = messages.length
+    const lastTs = len ? Math.max(...messages.map((m) => m.timestamp.getTime())) : Date.now()
+
+    if (sessionActivityBaselineLenRef.current === null) {
+      sessionActivityBaselineLenRef.current = len
+      sessionActivityBaselineLastTsRef.current = lastTs
+      onSessionActivity({
+        sessionId,
+        title: sidebarTitle,
+        messageCount: len,
+        bumpOrder: false,
+        lastMessageAt: lastTs,
+      })
+      return
+    }
+
+    const prevLen = sessionActivityBaselineLenRef.current
+    const prevLastTs = sessionActivityBaselineLastTsRef.current ?? 0
+    const lenChanged = prevLen !== len
+    const lastMessageAdvanced = lastTs > prevLastTs
+
+    if (lenChanged || lastMessageAdvanced) {
+      sessionActivityBaselineLenRef.current = len
+      sessionActivityBaselineLastTsRef.current = lastTs
+      onSessionActivity({
+        sessionId,
+        title: sidebarTitle,
+        messageCount: len,
+        bumpOrder: true,
+        lastMessageAt: lastTs,
+      })
+      return
+    }
+
     onSessionActivity({
       sessionId,
       title: sidebarTitle,
-      messageCount: messages.length,
+      messageCount: len,
+      bumpOrder: false,
+      lastMessageAt: lastTs,
     })
-  }, [sessionId, sidebarTitle, messages.length, onSessionActivity])
+  }, [
+    sessionId,
+    sidebarTitle,
+    messages,
+    onSessionActivity,
+    remotePersistence,
+    variant,
+    regulatoryHistoryReady,
+  ])
 
   const PROGRESS_STRIP_H_KEY = "research-agent-progress-strip-px"
   const [progressStripHeightPx, setProgressStripHeightPx] = useState(280)
@@ -1562,13 +1628,6 @@ export function ResearchAgentChat({
   const handleClearChat = () => {
     setMessages(variant === "regulatory" ? [] : [{ ...welcomeMessage, timestamp: new Date() }])
     setSessionDocuments([])
-    if (sessionId && onSessionActivity) {
-      onSessionActivity({
-        sessionId,
-        title: "New chat",
-        messageCount: variant === "regulatory" ? 0 : 1,
-      })
-    }
 
     if (typeof window !== "undefined" && storageKey) {
       try {

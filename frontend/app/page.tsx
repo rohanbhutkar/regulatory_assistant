@@ -134,7 +134,6 @@ function RegulatoryIntelligenceRemote() {
 
   const onSelectSession = useCallback((id: string) => {
     setActiveSessionId(id)
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, updatedAt: Date.now() } : s)))
   }, [])
 
   const onDeleteSession = useCallback(
@@ -199,7 +198,15 @@ function RegulatoryIntelligenceRemote() {
   )
 
   const onSessionActivity = useCallback(
-    (payload: { sessionId: string; title: string; messageCount: number }) => {
+    (payload: {
+      sessionId: string
+      title: string
+      messageCount: number
+      bumpOrder?: boolean
+      lastMessageAt?: number
+    }) => {
+      const bump = payload.bumpOrder === true
+      const orderAt = payload.lastMessageAt ?? Date.now()
       const cur = sessionsRef.current.find((s) => s.id === payload.sessionId)
       if (cur && !cur.titlePinned) {
         void chatPatchSession(payload.sessionId, { title: payload.title }).catch(() => {})
@@ -208,9 +215,11 @@ function RegulatoryIntelligenceRemote() {
         prev.map((s) => {
           if (s.id !== payload.sessionId) return s
           if (s.titlePinned) {
-            return { ...s, updatedAt: Date.now() }
+            return bump ? { ...s, updatedAt: orderAt } : s
           }
-          return { ...s, title: payload.title, updatedAt: Date.now() }
+          return bump
+            ? { ...s, title: payload.title, updatedAt: orderAt }
+            : { ...s, title: payload.title }
         }),
       )
     },
@@ -391,13 +400,9 @@ export default function RegulatoryIntelligencePage() {
     setActiveSessionId(id)
   }, [setSessions])
 
-  const onSelectSession = useCallback(
-    (id: string) => {
-      setActiveSessionId(id)
-      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, updatedAt: Date.now() } : s)))
-    },
-    [setSessions],
-  )
+  const onSelectSession = useCallback((id: string) => {
+    setActiveSessionId(id)
+  }, [])
 
   const onDeleteSession = useCallback(
     (id: string) => {
@@ -428,9 +433,7 @@ export default function RegulatoryIntelligencePage() {
 
   const onRenameSession = useCallback(
     (id: string, title: string) => {
-      setSessions((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, title, titlePinned: true, updatedAt: Date.now() } : s)),
-      )
+      setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title, titlePinned: true } : s)))
     },
     [setSessions],
   )
@@ -443,14 +446,24 @@ export default function RegulatoryIntelligencePage() {
   )
 
   const onSessionActivity = useCallback(
-    (payload: { sessionId: string; title: string; messageCount: number }) => {
+    (payload: {
+      sessionId: string
+      title: string
+      messageCount: number
+      bumpOrder?: boolean
+      lastMessageAt?: number
+    }) => {
+      const bump = payload.bumpOrder === true
+      const orderAt = payload.lastMessageAt ?? Date.now()
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== payload.sessionId) return s
           if (s.titlePinned) {
-            return { ...s, updatedAt: Date.now() }
+            return bump ? { ...s, updatedAt: orderAt } : s
           }
-          return { ...s, title: payload.title, updatedAt: Date.now() }
+          return bump
+            ? { ...s, title: payload.title, updatedAt: orderAt }
+            : { ...s, title: payload.title }
         }),
       )
     },
