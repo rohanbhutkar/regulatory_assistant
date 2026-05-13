@@ -13,10 +13,8 @@ export const metadata: Metadata = {
   title: "Regulatory Assistant",
   description:
     "Evidence-led regulatory research: FDA, EMA, China agencies, trials, literature, and more.",
-  icons: {
-    icon: "/lotor-lab-logo.png",
-    apple: "/lotor-lab-logo.png",
-  },
+  // Icons from `app/favicon.ico`, `app/apple-icon.png` (Safari-friendly .ico + touch icon).
+  // Omit `metadata.icons` so Next merges file conventions without dropping apple-touch.
 }
 
 export default function RootLayout({

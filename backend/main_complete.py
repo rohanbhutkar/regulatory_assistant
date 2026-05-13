@@ -364,6 +364,8 @@ async def get_agents():
 async def _safe_multiagent_ws_send(ws: WebSocket, payload: dict) -> bool:
     """Send JSON to the research WebSocket; never raise (client may have closed first)."""
     try:
+        if ws.application_state != WebSocketState.CONNECTED:
+            return False
         if ws.client_state != WebSocketState.CONNECTED:
             return False
         await ws.send_json(payload)
@@ -382,6 +384,12 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
     
     try:
         while True:
+            if websocket.application_state != WebSocketState.CONNECTED:
+                logger.info(
+                    "🔌 Multi-Agent WebSocket session ending for %s (application not connected)",
+                    client_id,
+                )
+                break
             data = await websocket.receive_json()
             query_type = data.get("type")
             
@@ -468,7 +476,11 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                     
                     # Send query_started with graph plan if it wasn't sent during execution
                     # (this handles cases where progress_callback wasn't called with graph plan)
-                    if websocket.client_state == WebSocketState.CONNECTED and not query_started_sent:
+                    if (
+                        websocket.application_state == WebSocketState.CONNECTED
+                        and websocket.client_state == WebSocketState.CONNECTED
+                        and not query_started_sent
+                    ):
                         logger.warning(f"⚠️ query_started not sent during execution, sending now")
                         graph_plan_dict = None
                         if hasattr(response, 'graph_plan') and response.graph_plan:
@@ -506,26 +518,42 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                         logger.info(f"✅ Multi-agent query completed for {client_id}")
                     else:
                         logger.warning(f"⚠️ Client {client_id} disconnected before query completion (or send failed)")
+                        break
                 
                 except Exception as e:
                     logger.error(f"❌ Error processing multi-agent query: {str(e)}")
-                    await _safe_multiagent_ws_send(
+                    if not await _safe_multiagent_ws_send(
                         websocket,
                         {
                             "type": "error",
                             "error": str(e),
                         },
-                    )
+                    ):
+                        break
             
             elif query_type == "ping":
-                await _safe_multiagent_ws_send(websocket, {"type": "pong"})
+                if not await _safe_multiagent_ws_send(websocket, {"type": "pong"}):
+                    break
     
     except WebSocketDisconnect:
-        websocket_manager.disconnect(client_id)
         logger.info(f"🔌 Multi-Agent WebSocket disconnected: {client_id}")
+    except RuntimeError as e:
+        # Starlette: receive_json/send after close (e.g. "accept" message) or receive after disconnect
+        msg = str(e).lower()
+        benign = (
+            "accept" in msg
+            or "websocket is not connected" in msg
+            or "cannot call \"receive\"" in msg
+            or "once a disconnect message" in msg
+        )
+        if benign:
+            logger.info("🔌 Multi-Agent WebSocket closed for %s: %s", client_id, e)
+        else:
+            logger.error(f"❌ Multi-Agent WebSocket error for {client_id}: {str(e)}")
     except Exception as e:
-        websocket_manager.disconnect(client_id)
         logger.error(f"❌ Multi-Agent WebSocket error for {client_id}: {str(e)}")
+    finally:
+        websocket_manager.disconnect(client_id)
 
 # REST endpoint for multi-agent research queries
 @app.post("/api/research/query")

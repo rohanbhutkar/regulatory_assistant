@@ -208,9 +208,11 @@ export function QueryProcessingPanel({
                         {entry.thinkingLines.map((t, j) => (
                           <li
                             key={j}
-                            className="border-l-[3px] border-primary/35 pl-3 text-sm leading-relaxed text-foreground/90"
+                            className="border-l-[3px] border-primary/35 pl-3 text-sm leading-relaxed text-foreground/90 [&_.prose]:my-0 [&_.prose_p]:mb-1 [&_.prose_p:last-child]:mb-0"
                           >
-                            {t}
+                            <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{t}</ReactMarkdown>
+                            </div>
                           </li>
                         ))}
                       </ul>

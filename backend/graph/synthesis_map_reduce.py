@@ -53,7 +53,7 @@ User query: {query}
 Digest this JSON/data shard for a final clinical synthesis model. **Preserve jurisdictional and source distinctions** (e.g. FDA vs NMPA)—do not merge into one generic list if the data separates them.
 Return markdown with:
 - **Key facts** (bullets; include **agency/jurisdiction** or source domain when evident)
-- **Citations**: every bullet should include NCT, PMID, URL, document title, or source id when present
+- **Citations**: every bullet should include NCT, PMID, document title, or source id when present; **when a URL exists in the shard, use a Markdown link** `[label](url)` in the bullet text (not only a bare URL)
 - **Verbatim quotes** (short, <=240 chars) for regulatory/procedural wording when critical, with source id
 - **Gaps**: what this shard does not establish
 

@@ -687,7 +687,7 @@ You are an expert clinical research analyst. Answer the user's question using th
 
 INSTRUCTIONS:
 1. **Prioritize depth** — specific facts, numbers, phases, endpoints, populations, and protocol detail wherever the data supports them. Do not shorten for brevity.
-2. **Citations** — every substantive claim should reference identifiers from the data. In the JSON **citations** array, use objects **{{"text": "short label", "url": "https://..."}}** whenever a URL exists in the data; use **https://clinicaltrials.gov/study/NCTxxxxxxxx** for trials and **https://pubmed.ncbi.nlm.nih.gov/PMID/** for publications. Plain strings are allowed only when no URL is available.
+2. **Citations and links** — every substantive claim should reference identifiers from the data. In the JSON **citations** array, use objects **{{"text": "short label", "url": "https://..."}}** whenever a URL exists in the data; use **https://clinicaltrials.gov/study/NCTxxxxxxxx** for trials and **https://pubmed.ncbi.nlm.nih.gov/PMID/** for publications. Plain strings are allowed only when no URL is available. Also embed those URLs in the main **answer** string as Markdown links `[label](url)` wherever a URL exists or can be formed from an NCT/PMID in the data—do not rely on the citations array alone for discoverability.
 3. **Quotes** — include short verbatim quotes with attribution when the source text is high-value (endpoints, eligibility, regulatory wording).
 4. Provide a **direct** answer first, then supporting detail, tables, and comparisons as needed. In the main body, avoid long generic caveat paragraphs; only note a limitation inline when it changes how to read a specific claim.
 5. End the **answer** string with a final subsection titled exactly `## Data quality and limitations` — at most **2–4 short sentences** OR **up to 4 bullet points** (not both). State coverage gaps, truncation/windowing if evident from the data, and overall confidence tersely. Do not repeat the same caveats from the body unless one clause is needed for clarity.
@@ -701,7 +701,7 @@ Return ONLY valid JSON
 
 JSON Response:
 {{
-    "answer": "Long, evidence-dense answer: cite NCT/PMID/URL inline; use quotes where appropriate; tables for comparisons. Must end with ## Data quality and limitations (2–4 sentences or ≤4 bullets only).",
+    "answer": "Long, evidence-dense answer: cite NCT/PMID inline; use Markdown links [label](url) in the prose for every URL you use; use quotes where appropriate; tables for comparisons. Must end with ## Data quality and limitations (2–4 sentences or ≤4 bullets only).",
     "citations": [
         {{"text": "NCT01234567: trial title", "url": "https://clinicaltrials.gov/study/NCT01234567"}},
         {{"text": "Source title", "url": "https://example.gov/guidance"}}
@@ -727,7 +727,7 @@ DATA FOUND:
 
             response = await self.generate_structured_response(
                 synthesis_prompt,
-                system_prompt="You are an expert clinical research analyst. Provide detailed, citation-heavy, quote-backed answers in English. Prefer evidence over summary; do not artificially shorten. Put routine coverage and completeness notes only in the final ## Data quality and limitations section of the answer (short, per user instructions).",
+                system_prompt="You are an expert clinical research analyst. Provide detailed, citation-heavy, quote-backed answers in English. Prefer evidence over summary; do not artificially shorten. Include Markdown links in the answer body wherever URLs exist in the data. Put routine coverage and completeness notes only in the final ## Data quality and limitations section of the answer (short, per user instructions).",
                 max_tokens=getattr(settings, "SYNTHESIS_MAX_TOKENS", self.max_tokens),
             )
 

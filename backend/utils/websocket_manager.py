@@ -6,6 +6,23 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def note_broadcast_task(task: asyncio.Task) -> None:
+    """Attach to fire-and-forget broadcast tasks so failures are observed (avoids 'never retrieved')."""
+
+    def _done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        try:
+            exc = t.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.debug("WebSocket broadcast task failed: %s", exc, exc_info=exc)
+
+    task.add_done_callback(_done)
+
+
 class WebSocketManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
@@ -301,9 +318,9 @@ Just let me know what aspect of diabetes trials you'd like to explore further!""
         """Broadcast activity event to all connected clients or specific subscribers"""
         event_json = json.dumps(event)
         
-        # Broadcast to all connected clients
+        # Broadcast to all connected clients (snapshot: handlers may disconnect concurrently)
         disconnected_clients = []
-        for client_id, websocket in self.active_connections.items():
+        for client_id, websocket in list(self.active_connections.items()):
             try:
                 # Check if client is subscribed to this operation/context
                 subscriptions = self.activity_subscriptions.get(client_id, [])
@@ -386,7 +403,7 @@ Just let me know what aspect of diabetes trials you'd like to explore further!""
         event_json = json.dumps(event)
         
         disconnected_clients = []
-        for client_id, websocket in self.active_connections.items():
+        for client_id, websocket in list(self.active_connections.items()):
             try:
                 if websocket.client_state.name == "CONNECTED":
                     await websocket.send_text(event_json)

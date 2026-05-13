@@ -33,7 +33,11 @@ import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
 import { chatAppendMessage, chatCompleteTurn, chatListMessages } from "@/lib/chat-persistence-api"
-import { normalizeChatCitations } from "@/lib/chat-citations"
+import {
+  buildCitationThinkingEntry,
+  filterCitationsForFooter,
+  normalizeChatCitations,
+} from "@/lib/chat-citations"
 import { titleFromFirstUserMessage } from "@/lib/regulatory-chat-sessions"
 import { useBackendLogs } from "@/components/activity/logs-viewer"
 import { cn } from "@/lib/utils"
@@ -121,6 +125,38 @@ function formatGraphNodeIdForDisplay(name: string, index: number): string {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
   return formatted || name
+}
+
+/** Backend synthetic progress id — pre-graph “assessing query / planning” (not a graph node). */
+const ORCHESTRATION_PLANNING_NODE_ID = "query_analysis"
+
+function planningStepFromGraphPlan(
+  graphPlan: { nodes?: unknown[]; reasoning?: unknown } | null | undefined,
+): QueryStep {
+  const reasoningRaw =
+    graphPlan && typeof graphPlan === "object" && "reasoning" in graphPlan
+      ? (graphPlan as { reasoning?: unknown }).reasoning
+      : undefined
+  const reasoning =
+    typeof reasoningRaw === "string" && reasoningRaw.trim() ? reasoningRaw.trim() : ""
+  const description =
+    reasoning.length > 360 ? `${reasoning.slice(0, 360)}…` : reasoning || "Analyzing query and creating execution plan"
+  return {
+    id: ORCHESTRATION_PLANNING_NODE_ID,
+    name: formatGraphNodeIdForDisplay(ORCHESTRATION_PLANNING_NODE_ID, 0),
+    description,
+    status: "completed",
+    agent: "analysis",
+  }
+}
+
+/** One stable first row for orchestration planning + graph steps (drops duplicate planner id from nodes if any). */
+function withPlanningStepFirst(
+  graphPlan: { nodes?: unknown[]; reasoning?: unknown } | null | undefined,
+  graphSteps: QueryStep[],
+): QueryStep[] {
+  const body = graphSteps.filter((s) => s.id !== ORCHESTRATION_PLANNING_NODE_ID)
+  return [planningStepFromGraphPlan(graphPlan), ...body]
 }
 
 /** Build progress steps from API graph_plan.nodes; preserve "completed" per id when replanning. */
@@ -851,10 +887,13 @@ export function ResearchAgentChat({
             if (n && typeof n === "object" && typeof n.id === "string" && n.id) completedIds.add(n.id)
           }
         }
-        const restSteps = graphPlanToQuerySteps(graphPlan, completedIds)
+        const restSteps = withPlanningStepFirst(graphPlan, graphPlanToQuerySteps(graphPlan, completedIds))
+        const normalizedCitations = normalizeChatCitations(synthesis?.citations)
+        const footerCitations = filterCitationsForFooter(answer, normalizedCitations)
+        const citationDr = buildCitationThinkingEntry(answer, normalizedCitations, footerCitations)
         const queryProcessing = buildQueryProcessingSnapshot({
           querySteps: restSteps,
-          deepResearchTimeline: [],
+          deepResearchTimeline: [citationDr],
           graphPlan,
           executionTrace: json.execution_trace,
         })
@@ -866,7 +905,7 @@ export function ResearchAgentChat({
           agentName: "Multi-Agent Research Platform",
           agentType: "research",
           metadata: {
-            citations: normalizeChatCitations(synthesis?.citations),
+            citations: normalizedCitations,
             confidence: synthesis?.confidence ?? 0.8,
             data_quality: synthesis?.data_quality ?? "good",
             processing_time: json.metadata?.processing_time ?? 0,
@@ -882,6 +921,7 @@ export function ResearchAgentChat({
         setQuerySteps([])
         setCurrentStep(undefined)
         setDeepResearchTimeline([])
+        deepResearchTimelineRef.current = []
         setLiveGraphPlanSummary(undefined)
         setLiveExecutionTrace([])
         void persistRemoteAssistant(userPersistId, aiMessage)
@@ -924,6 +964,7 @@ export function ResearchAgentChat({
 
       ws.onopen = () => {
         setDeepResearchTimeline([])
+        deepResearchTimelineRef.current = []
         setLiveGraphPlanSummary(undefined)
         setLiveExecutionTrace([])
         drTimelineLenRef.current = 0
@@ -973,7 +1014,11 @@ export function ResearchAgentChat({
 
           const pushDr = (entry: Omit<DeepResearchTimelineEntry, "key"> & { key?: string }) => {
             const key = entry.key ?? `dr-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-            setDeepResearchTimeline((prev) => [...prev, { ...entry, key }].slice(-40))
+            setDeepResearchTimeline((prev) => {
+              const next = [...prev, { ...entry, key }].slice(-40)
+              deepResearchTimelineRef.current = next
+              return next
+            })
           }
 
           if (data.type === "research_brief_ready") {
@@ -1140,14 +1185,14 @@ export function ResearchAgentChat({
               thinkingLines: thinking,
               bullets: [...gapBullets, ...addBullets],
             })
-            const gp = data.data?.graph_plan as { nodes?: unknown[] } | undefined
+            const gp = data.data?.graph_plan as { nodes?: unknown[]; reasoning?: unknown } | undefined
             if (gp?.nodes && Array.isArray(gp.nodes)) {
               setQuerySteps((prev) => {
                 const completed = new Set<string>()
                 for (const s of prev) {
                   if (s.status === "completed") completed.add(s.id)
                 }
-                return graphPlanToQuerySteps(gp, completed)
+                return withPlanningStepFirst(gp, graphPlanToQuerySteps(gp, completed))
               })
             }
             return
@@ -1158,7 +1203,7 @@ export function ResearchAgentChat({
             const graphPlan = data.data?.graph_plan
             const steps = graphPlanToQuerySteps(graphPlan)
             if (steps.length > 0) {
-              setQuerySteps(steps)
+              setQuerySteps(withPlanningStepFirst(graphPlan, steps))
             }
             setLiveGraphPlanSummary(graphPlanToProcessingSummary(graphPlan))
             return
@@ -1201,6 +1246,10 @@ export function ResearchAgentChat({
                     agent,
                   }
                   if (mergedDetail) row.detail = mergedDetail
+                  if (nodeId === ORCHESTRATION_PLANNING_NODE_ID) {
+                    const rest = prev.filter((s) => s.id !== ORCHESTRATION_PLANNING_NODE_ID)
+                    return [row, ...rest]
+                  }
                   return [...prev, row]
                 }
                 return prev.map((step) => {
@@ -1212,6 +1261,11 @@ export function ResearchAgentChat({
                     updates.status = "completed"
                   } else if (status === "failed") {
                     updates.status = "error"
+                  }
+                  const incomingDesc =
+                    typeof nodeData?.description === "string" ? nodeData.description.trim() : ""
+                  if (incomingDesc) {
+                    updates.description = incomingDesc
                   }
                   const nextDetail = mergeNodeProgressDetail(step.detail, nodeData || {})
                   return {
@@ -1238,9 +1292,13 @@ export function ResearchAgentChat({
             const serverTrace = data.data?.execution_trace
             const executionTraceForSnap =
               Array.isArray(serverTrace) && serverTrace.length > 0 ? serverTrace : liveExecutionTraceRef.current
+            const normalizedCitations = normalizeChatCitations(synthesis?.citations)
+            const footerCitations = filterCitationsForFooter(answer, normalizedCitations)
+            const citationDr = buildCitationThinkingEntry(answer, normalizedCitations, footerCitations)
+            const drTimelineForSnap = [...deepResearchTimelineRef.current, citationDr].slice(-40)
             const queryProcessing = buildQueryProcessingSnapshot({
               querySteps: queryStepsRef.current,
-              deepResearchTimeline: deepResearchTimelineRef.current,
+              deepResearchTimeline: drTimelineForSnap,
               graphPlan: data.data?.graph_plan,
               executionTrace: executionTraceForSnap,
             })
@@ -1252,7 +1310,7 @@ export function ResearchAgentChat({
               agentName: "Multi-Agent Research Platform",
               agentType: "research",
               metadata: {
-                citations: normalizeChatCitations(synthesis?.citations),
+                citations: normalizedCitations,
                 confidence: synthesis?.confidence || 0.8,
                 data_quality: synthesis?.data_quality || "good",
                 processing_time: data.data?.processing_time || 0,
@@ -1268,6 +1326,7 @@ export function ResearchAgentChat({
             setQuerySteps([])
             setCurrentStep(undefined)
             setDeepResearchTimeline([])
+            deepResearchTimelineRef.current = []
             setLiveGraphPlanSummary(undefined)
             setLiveExecutionTrace([])
             if ((ws as any).pingInterval) {
@@ -1482,6 +1541,7 @@ export function ResearchAgentChat({
     setQuerySteps([])
     setCurrentStep(undefined)
     setDeepResearchTimeline([])
+    deepResearchTimelineRef.current = []
     setLiveGraphPlanSummary(undefined)
     setLiveExecutionTrace([])
   }

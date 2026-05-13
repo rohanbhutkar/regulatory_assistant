@@ -2096,7 +2096,7 @@ RAW DATA SAMPLES ({len(raw_data_for_synthesis)} items):
 {'[... and ' + str(len(raw_data_for_synthesis) - 50) + ' more items]' if len(raw_data_for_synthesis) > 50 else ''}
 
 INSTRUCTIONS:
-1. Produce a **specific, evidence-backed** report—not a high-level overview. Ground claims in **titles, URLs, identifiers, and short quotes** from RAW DATA SAMPLES and the analysis summary.
+1. Produce a **specific, evidence-backed** report—not a high-level overview. Ground claims in **titles, URLs, identifiers, and short quotes** from RAW DATA SAMPLES and the analysis summary. **Embed URLs as Markdown links** `[label](url)` in the report prose whenever a URL appears in the data.
 2. For **compare**-style tasks: use **Markdown tables** (rows = topic, columns = entity/jurisdiction) and cite sources per cell.
 3. Focus on the analysis task and original query; preserve **procedural detail** (who, when, what must be filed, meeting types, GLP/IND touchpoints) when present in the data.
 4. Use the specified output format from the analysis plan where applicable.
@@ -2575,7 +2575,7 @@ INSTRUCTIONS:
 1. Apply logical reasoning based on the specific reasoning task
 2. Consider the original query context
 3. Focus on the reasoning type and focus areas specified
-4. Provide insights and conclusions grounded in the **DATA FOR REASONING**—cite URLs, titles, or ids from items where applicable; avoid generic regulatory platitudes
+4. Provide insights and conclusions grounded in the **DATA FOR REASONING**—cite titles or ids from items where applicable; **when items include URLs, use Markdown links** `[label](url)` in the narrative; avoid generic regulatory platitudes
 5. Be analytical and evidence-based in your reasoning
 6. Consider temporal context when reasoning involves recent developments
 

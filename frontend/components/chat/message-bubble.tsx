@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import type { Message } from "@/lib/types/chat-types"
-import { normalizeChatCitations } from "@/lib/chat-citations"
+import { normalizeChatCitations, filterCitationsForFooter } from "@/lib/chat-citations"
 import { parseQueryProcessingSnapshot } from "@/lib/query-processing-snapshot"
 import { QueryProcessingPanel } from "@/components/chat/query-processing-panel"
 import { User, Bot, FileText, ExternalLink, RotateCcw, Brain } from "lucide-react"
@@ -34,7 +34,10 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isUser = message.role === "user"
   const ent = appearance === "enterprise"
-  const citationItems = normalizeChatCitations(message.metadata?.citations)
+  const citationItems = useMemo(() => {
+    const normalized = normalizeChatCitations(message.metadata?.citations)
+    return filterCitationsForFooter(message.content, normalized)
+  }, [message.content, message.metadata?.citations])
   const thinkingSnapshot = useMemo(
     () => parseQueryProcessingSnapshot(message.metadata?.query_processing),
     [message.metadata?.query_processing],

@@ -149,7 +149,7 @@ NEW EVIDENCE (may be truncated only if extremely large):
 
 Write the UPDATED DRAFT in Markdown:
 - Lead with the best-supported claims; mark uncertainty explicitly
-- Cite identifiers (NCT, PMID, URLs) when present in the evidence
+- Cite identifiers (NCT, PMID, URLs) when present in the evidence; **where URLs exist, use Markdown links** `[label](url)` in the prose
 - If this step was low-value, say so briefly and keep prior content
 - Keep length reasonable (roughly 400-2500 words); summarize if needed
 """
@@ -223,7 +223,7 @@ Return ONLY valid JSON with this exact structure:
   "skip_remaining_searches": false,
   "what_changed": "1-3 sentences: facts to fold into the answer",
   "next_step_hint": "optional string",
-  "updated_draft_markdown": "Full updated running answer in Markdown (merge new evidence; do not restart from scratch unless prior draft empty). 400-2500 words target; cite NCT/PMID/URLs when present."
+  "updated_draft_markdown": "Full updated running answer in Markdown (merge new evidence; do not restart from scratch unless prior draft empty). 400-2500 words target; cite NCT/PMID when present; use Markdown links [label](url) in the text for every URL from evidence."
 }}
 
 Rules:

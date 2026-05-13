@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional, Callable
 from enum import Enum
 
+from utils.websocket_manager import note_broadcast_task
+
 class OperationType(str, Enum):
     """Types of operations that can be tracked"""
     AI_GENERATION = "ai_generation"
@@ -353,8 +355,7 @@ class ActivityLogger:
                     # Schedule the coroutine as a task (fire and forget)
                     # This will execute the coroutine without blocking
                     task = loop.create_task(self.websocket_manager.broadcast_activity_event(event))
-                    # Add done callback to handle any errors silently
-                    task.add_done_callback(lambda t: None if t.exception() is None else None)
+                    note_broadcast_task(task)
                 except RuntimeError:
                     # No running event loop - this can happen in sync contexts
                     # The event will still be logged, just not broadcast via WebSocket

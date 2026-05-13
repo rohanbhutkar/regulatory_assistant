@@ -1,12 +1,38 @@
 """
 Log Capture - Captures backend logs and sends them to frontend via WebSocket
 """
+import re
 import sys
 import logging
 import asyncio
-from typing import Optional, Callable
+from typing import Optional
 from datetime import datetime
 from collections import deque
+
+from utils.websocket_manager import note_broadcast_task
+
+# Word-boundary heuristics so regulatory text (e.g. "exceptional circumstances")
+# does not trip substring checks like "exception" or bare "error" inside words.
+_ERROR_HINTS = re.compile(
+    r"(?:"
+    r"\berrors?\b|"
+    r"\bfail(?:ed|ure|ures)?\b|"
+    r"\bexception\b|"
+    r"\btraceback\b|"
+    r"\b[a-z_]+error\b|"  # ValueError, TypeError, etc.
+    r"^[\s\|\[]*(?:error|critical)\b|"  # log line prefixes
+    r"\bhttp\s+\d{3}\s+(?:4\d\d|5\d\d)\b"  # "HTTP 500 ..." style access errors
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WARNING_HINTS = re.compile(
+    r"(?:\bwarn(?:ing|ings)?\b|^[\s\|\[]*warning\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_INFO_HINTS = re.compile(
+    r"(?:\binfos?\b|^[\s\|\[]*info\b|ℹ️|✅|🔍|📊)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 class LogCapture:
     """Captures stdout/stderr and logging output and forwards to WebSocket"""
@@ -147,16 +173,34 @@ class LogCapture:
         
         return '\n'.join(lines)
     
-    def _capture_log(self, message: str, source: str = 'stdout'):
+    @staticmethod
+    def _record_to_ui_level(record: logging.LogRecord) -> str:
+        """Map stdlib log severity to UI levels (authoritative when set)."""
+        if record.levelno >= logging.ERROR:
+            return "error"
+        if record.levelno >= logging.WARNING:
+            return "warning"
+        if record.levelno >= logging.INFO:
+            return "info"
+        return "debug"
+
+    def _capture_log(
+        self,
+        message: str,
+        source: str = "stdout",
+        level_override: Optional[str] = None,
+    ):
         """Capture a log message and send via WebSocket"""
         # Wrap long messages to prevent cutoff
         wrapped_message = self._wrap_text(message, width=120)
-        
+
+        level = level_override if level_override is not None else self._detect_log_level(message)
+
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "message": wrapped_message,
             "source": source,
-            "level": self._detect_log_level(message)
+            "level": level,
         }
         
         # Add to buffer
@@ -173,7 +217,9 @@ class LogCapture:
                 loop = asyncio.get_running_loop()
                 # Schedule async broadcast
                 try:
-                    asyncio.create_task(self.websocket_manager.broadcast_log_event(log_entry))
+                    note_broadcast_task(
+                        asyncio.create_task(self.websocket_manager.broadcast_log_event(log_entry))
+                    )
                 except Exception:
                     # If task creation fails, just queue it
                     pass
@@ -183,16 +229,20 @@ class LogCapture:
                 pass
     
     def _detect_log_level(self, message: str) -> str:
-        """Detect log level from message"""
-        message_lower = message.lower()
-        if any(indicator in message_lower for indicator in ['error', '❌', 'failed', 'exception']):
-            return 'error'
-        elif any(indicator in message_lower for indicator in ['warning', '⚠️', 'warn']):
-            return 'warning'
-        elif any(indicator in message_lower for indicator in ['info', 'ℹ️', '✅', '🔍', '📊']):
-            return 'info'
-        else:
-            return 'debug'
+        """Infer log level from free text (stdout/stderr); prefer LoggingHandler override when available."""
+        if "❌" in message:
+            return "error"
+        if "⚠️" in message:
+            return "warning"
+        if _ERROR_HINTS.search(message):
+            return "error"
+        if _WARNING_HINTS.search(message):
+            return "warning"
+        if "ℹ️" in message or "✅" in message or "🔍" in message or "📊" in message:
+            return "info"
+        if _INFO_HINTS.search(message):
+            return "info"
+        return "debug"
     
     def get_recent_logs(self, limit: int = 100) -> list:
         """Get recent log entries"""
@@ -211,7 +261,11 @@ class LoggingHandler(logging.Handler):
         try:
             message = self.format(record)
             level = record.levelname.lower()
-            self.log_capture._capture_log(message, f'logger_{level}')
+            self.log_capture._capture_log(
+                message,
+                f"logger_{level}",
+                level_override=self.log_capture._record_to_ui_level(record),
+            )
         except Exception:
             pass
 

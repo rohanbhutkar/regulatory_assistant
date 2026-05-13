@@ -274,6 +274,7 @@ def create_reasoning_graph():
                 2. Research gaps
                 3. Practical implications
                 4. Future research directions
+                5. **Traceability** — in summary, key_findings, and recommendations text, cite trial/publication identifiers from the data and **use Markdown links** `[label](url)` wherever a URL appears in the context above (do not invent URLs).
                 """
                 
                 # Get LLM response
