@@ -104,6 +104,33 @@ class LLMAgent:
         now = datetime.now()
         return f"Current Date: {now.strftime('%Y-%m-%d')} ({now.strftime('%B %d, %Y')})"
 
+    @staticmethod
+    def _anthropic_response_text(response: Any) -> str:
+        """
+        Read assistant text from a Messages API response.
+        Avoids IndexError when content is empty (rate limits, refusals, edge stop reasons)
+        and joins multiple text blocks when present (e.g. after non-text blocks).
+        """
+        blocks = getattr(response, "content", None) or []
+        if not blocks:
+            log_error(
+                f"Anthropic returned no content blocks (stop_reason={getattr(response, 'stop_reason', None)})",
+                "Anthropic messages",
+            )
+            return ""
+        parts: List[str] = []
+        for block in blocks:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        if parts:
+            return "".join(parts)
+        log_error(
+            f"No extractable text on content blocks (types={[getattr(b, 'type', type(b).__name__) for b in blocks]})",
+            "Anthropic messages",
+        )
+        return ""
+
     async def _anthropic_messages(
         self,
         *,
@@ -123,7 +150,7 @@ class LLMAgent:
         if system:
             kwargs["system"] = system
         response = await self.client.messages.create(**kwargs)
-        return response.content[0].text
+        return self._anthropic_response_text(response)
 
     async def _openai_sdk_chat(
         self,
@@ -268,7 +295,7 @@ class LLMAgent:
                     system=system_blocks,
                     messages=[{"role": "user", "content": user_blocks}],
                 )
-                return response.content[0].text
+                return self._anthropic_response_text(response)
 
             return await self._complete(user_content, system=sp, max_tokens=mt, temperature=temp)
         except Exception as e:
@@ -886,7 +913,7 @@ DATA FOUND:
                 system=system_blocks,
                 messages=[{"role": "user", "content": user_blocks}],
             )
-            text = response.content[0].text
+            text = self._anthropic_response_text(response)
             if text and text.strip().startswith("```"):
                 text = re.sub(r"```json\s*", "", text)
                 text = re.sub(r"```\s*$", "", text)

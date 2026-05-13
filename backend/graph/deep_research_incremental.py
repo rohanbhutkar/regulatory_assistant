@@ -25,13 +25,50 @@ def truncate_for_reflection(payload: Any, max_chars: Optional[int] = None) -> st
 
 
 def _parse_json_object(raw: str) -> Dict[str, Any]:
-    raw = (raw or "").strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group())
+    """
+    Parse the first JSON object from LLM output. Never raises; invalid JSON → {}.
+
+    Uses JSONDecoder.raw_decode from each ``{`` so nested braces and trailing text are handled;
+    avoids a second json.loads on a greedy ``{.*}`` slice raising JSONDecodeError.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return {}
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\s*```\s*$", "", s).strip()
+
+    dec = json.JSONDecoder()
+
+    def _try_one(candidate: str) -> Optional[Dict[str, Any]]:
+        c = candidate.strip()
+        if not c:
+            return None
+        try:
+            obj = json.loads(c)
+            return obj if isinstance(obj, dict) else None
+        except json.JSONDecodeError:
+            pass
+        start = c.find("{")
+        while start != -1:
+            try:
+                obj, _end = dec.raw_decode(c, start)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+            start = c.find("{", start + 1)
+        return None
+
+    parsed = _try_one(s)
+    if parsed is not None:
+        return parsed
+    # Last resort: legacy greedy slice (still must not raise)
+    m = re.search(r"\{.*\}", s, re.DOTALL)
+    if m:
+        parsed = _try_one(m.group())
+        if parsed is not None:
+            return parsed
     return {}
 
 
