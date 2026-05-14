@@ -92,6 +92,12 @@ def log_warning(message: str):
     """Non-fatal operational warning (rate limits, retries, etc.)."""
     logger.warning(_redact_secrets_in_message(message))
 
+
+def log_debug(message: str):
+    """Verbose diagnostics (per-retry noise); respect LOG_LEVEL."""
+    logger.debug(_redact_secrets_in_message(message))
+
+
 def log_performance(operation: str, duration: float):
     """Log performance metrics"""
     logger.info(f"Performance: {operation} completed in {duration:.2f}s")

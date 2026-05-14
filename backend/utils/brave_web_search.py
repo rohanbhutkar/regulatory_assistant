@@ -6,16 +6,18 @@ Used when Google Custom Search returns HTTP 429 or as an explicit fallback.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
 
 from config import settings
-from utils.logger import log_api_call, log_error, log_warning
+from utils.logger import log_api_call, log_debug, log_error, log_warning
 from utils.rate_limiter import rate_limiter
 
 _DEFAULT_BRAVE_WEB_URL = "https://api.search.brave.com/res/v1/web/search"
+_LAST_BRAVE_EMPTY_RESULTS_WARN_MONO = 0.0
 
 
 def resolved_brave_web_search_url(base: str) -> str:
@@ -132,9 +134,17 @@ async def fetch_brave_web_urls(
                     return urls[:num_results]
                 web = data.get("web") if isinstance(data, dict) else None
                 if isinstance(web, dict) and web.get("results") == []:
-                    log_warning(
-                        f"Brave Web Search returned 200 with empty web.results (query len={len(q_try)})."
-                    )
+                    global _LAST_BRAVE_EMPTY_RESULTS_WARN_MONO
+                    tmono = time.monotonic()
+                    if tmono - _LAST_BRAVE_EMPTY_RESULTS_WARN_MONO > 45.0:
+                        _LAST_BRAVE_EMPTY_RESULTS_WARN_MONO = tmono
+                        log_warning(
+                            f"Brave Web Search returned 200 with empty web.results (query len={len(q_try)})."
+                        )
+                    else:
+                        log_debug(
+                            f"Brave Web Search empty web.results (query len={len(q_try)}); throttled warning."
+                        )
                 continue
             if sc == 429:
                 log_warning(

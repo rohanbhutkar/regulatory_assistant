@@ -196,7 +196,12 @@ class Settings(BaseSettings):
     )
     # Per-query-stem retries: Google 429 → Brave first; if Brave has no URLs, backoff then retry Google.
     # Transient 5xx / network errors still use backoff without requiring Brave first.
+    # Legacy env knob; China CSE no longer retries (single Google + optional Brave on 429).
     CHINA_REGULATORY_CSE_MAX_RETRIES: int = int(os.getenv("CHINA_REGULATORY_CSE_MAX_RETRIES", "10"))
+    # After any Google CSE 429, skip further Google calls process-wide until this window passes (reduces 429+log storms).
+    CHINA_REGULATORY_GOOGLE_CSE_429_COOLDOWN_SECONDS: float = float(
+        os.getenv("CHINA_REGULATORY_GOOGLE_CSE_429_COOLDOWN_SECONDS", "45")
+    )
     # Max characters of fetched page text kept per China regulatory result (synthesis context).
     CHINA_REGULATORY_PAGE_MAX_CHARS: int = int(os.getenv("CHINA_REGULATORY_PAGE_MAX_CHARS", "20000"))
     # Max characters of fetched page text kept per google_search / FiercePharma-style web result.

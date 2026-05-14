@@ -11,6 +11,7 @@ import pytest
 from agents.china_regulatory_agent import (
     ChinaRegulatoryAgent,
     _build_cse_query,
+    _china_brave_query_variants,
     _classify_portal,
     _expand_query_variations,
     _merge_url_batches,
@@ -19,6 +20,22 @@ from agents.china_regulatory_agent import (
     _stem_instructions,
     _terms_for_relevance,
 )
+
+import agents.china_regulatory_agent as china_reg_module
+
+
+@pytest.fixture(autouse=True)
+def _reset_china_google_429_globals() -> None:
+    china_reg_module._CHINA_GOOGLE_CSE_429_UNTIL = 0.0
+    yield
+    china_reg_module._CHINA_GOOGLE_CSE_429_UNTIL = 0.0
+
+
+def test_china_brave_query_variants_adds_shorter_prefixes() -> None:
+    q = " ".join(["词"] * 35)
+    v = _china_brave_query_variants(q)
+    assert len(v) >= 2
+    assert all(isinstance(s, str) and len(s) >= 2 for s in v)
 
 
 def test_classify_portal() -> None:
@@ -109,26 +126,21 @@ def test_rank_urls_preserves_first_seen_order() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cse_urls_retries_on_503(monkeypatch) -> None:
+async def test_cse_urls_503_returns_empty_no_retry(monkeypatch) -> None:
     from config import settings
 
     monkeypatch.setattr(settings, "GOOGLE_API_KEY", "k")
     monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
     monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
-    monkeypatch.setattr(settings, "CHINA_REGULATORY_CSE_MAX_RETRIES", 5)
     monkeypatch.setattr(settings, "BRAVE_API_KEY", "")
 
     r503 = MagicMock()
     r503.status_code = 503
-    r200 = MagicMock()
-    r200.status_code = 200
-    r200.raise_for_status = MagicMock()
-    r200.json = MagicMock(return_value={"items": [{"link": "https://www.cde.org.cn/x"}]})
 
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = None
-    mock_client.get = AsyncMock(side_effect=[r503, r503, r200])
+    mock_client.get = AsyncMock(return_value=r503)
 
     sleep_mock = AsyncMock()
     monkeypatch.setattr("agents.china_regulatory_agent.asyncio.sleep", sleep_mock)
@@ -138,9 +150,9 @@ async def test_cse_urls_retries_on_503(monkeypatch) -> None:
         with patch("agents.china_regulatory_agent.rate_limiter.acquire", new_callable=AsyncMock):
             urls = await agent._cse_urls("test q", 5)
 
-    assert urls == ["https://www.cde.org.cn/x"]
-    assert mock_client.get.call_count == 3
-    assert sleep_mock.await_count == 2
+    assert urls == []
+    assert mock_client.get.call_count == 1
+    sleep_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -150,7 +162,6 @@ async def test_cse_urls_429_returns_brave_urls(monkeypatch) -> None:
     monkeypatch.setattr(settings, "GOOGLE_API_KEY", "k")
     monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
     monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
-    monkeypatch.setattr(settings, "CHINA_REGULATORY_CSE_MAX_RETRIES", 3)
     monkeypatch.setattr(settings, "BRAVE_API_KEY", "bk")
 
     r429 = MagicMock()
@@ -181,27 +192,22 @@ async def test_cse_urls_429_returns_brave_urls(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cse_urls_429_brave_empty_then_google_after_backoff(monkeypatch) -> None:
-    """429 → Brave empty → backoff → retry Google and succeed."""
+async def test_cse_urls_429_brave_empty_returns_empty_no_backoff(monkeypatch) -> None:
+    """429 and empty Brave → fail stem immediately (no Google retry, no sleep)."""
     from config import settings
 
     monkeypatch.setattr(settings, "GOOGLE_API_KEY", "k")
     monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
     monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
-    monkeypatch.setattr(settings, "CHINA_REGULATORY_CSE_MAX_RETRIES", 3)
     monkeypatch.setattr(settings, "BRAVE_API_KEY", "bk")
 
     r429 = MagicMock()
     r429.status_code = 429
-    r200 = MagicMock()
-    r200.status_code = 200
-    r200.raise_for_status = MagicMock()
-    r200.json = MagicMock(return_value={"items": [{"link": "https://www.cde.org.cn/retry-ok"}]})
 
     mock_client = AsyncMock()
     mock_client.__aenter__.return_value = mock_client
     mock_client.__aexit__.return_value = None
-    mock_client.get = AsyncMock(side_effect=[r429, r200])
+    mock_client.get = AsyncMock(return_value=r429)
 
     sleep_mock = AsyncMock()
     monkeypatch.setattr("agents.china_regulatory_agent.asyncio.sleep", sleep_mock)
@@ -217,10 +223,12 @@ async def test_cse_urls_429_brave_empty_then_google_after_backoff(monkeypatch) -
             ) as brave_mock:
                 urls = await agent._cse_urls("test q", 5)
 
-    assert urls == ["https://www.cde.org.cn/retry-ok"]
+    assert urls == []
     assert brave_mock.await_count == 1
-    assert mock_client.get.call_count == 2
-    assert sleep_mock.await_count == 1
+    assert mock_client.get.call_count == 1
+    sleep_mock.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_search_regulatory_cse_and_fetch(monkeypatch) -> None:
     from config import settings
