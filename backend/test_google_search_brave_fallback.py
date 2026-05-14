@@ -60,6 +60,44 @@ async def test_brave_fallback_on_google_429(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_google_429_brave_empty_then_google_after_backoff(monkeypatch) -> None:
+    from config import settings
+
+    monkeypatch.setattr(settings, "GOOGLE_API_KEY", "gk")
+    monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
+    monkeypatch.setattr(settings, "BRAVE_API_KEY", "bk")
+    monkeypatch.setattr(settings, "GOOGLE_SEARCH_CSE_429_BACKOFF_ROUNDS", 2)
+
+    r429 = MagicMock()
+    r429.status_code = 429
+    r200 = MagicMock()
+    r200.status_code = 200
+    r200.json = MagicMock(
+        return_value={"items": [{"link": "https://example.com/after-retry"}]}
+    )
+
+    agent = GoogleSearchAgent()
+    agent.base_url = "https://www.googleapis.com/customsearch/v1"
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get = AsyncMock(side_effect=[r429, r200])
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("agents.fierce_pharma_agent.asyncio.sleep", sleep_mock)
+
+    with patch("agents.fierce_pharma_agent._llm_expand_cse_queries", new_callable=AsyncMock, return_value=[]):
+        with patch("agents.fierce_pharma_agent.httpx.AsyncClient", return_value=mock_client):
+            with patch.object(agent, "_brave_search_urls", new_callable=AsyncMock) as brave_mock:
+                brave_mock.return_value = []
+                urls = await agent._make_google_search("some drug trial", 5)
+
+    assert urls == ["https://example.com/after-retry"]
+    assert brave_mock.await_count == 1
+    assert mock_client.get.call_count == 2
+    assert sleep_mock.await_count == 1
+@pytest.mark.asyncio
 async def test_brave_search_urls_parses_web_results(monkeypatch) -> None:
     from config import settings
 

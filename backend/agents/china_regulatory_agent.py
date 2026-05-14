@@ -358,7 +358,6 @@ class ChinaRegulatoryAgent:
             for attempt in range(max_attempts):
                 await rate_limiter.acquire("china_regulatory")
                 backoff_s: Optional[float] = None
-                try_brave_after_429 = False
                 async with _CHINA_CSE_HTTP_LOCK:
                     start = asyncio.get_event_loop().time()
                     try:
@@ -367,12 +366,27 @@ class ChinaRegulatoryAgent:
                         sc = response.status_code
 
                         if sc == 429:
-                            try_brave_after_429 = True
-                            backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
                             log_warning(
-                                f"China regulatory Google CSE returned 429; "
-                                f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                                "China regulatory Google CSE returned 429; trying Brave Web Search."
                             )
+                            brave = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
+                            if brave:
+                                log_warning(
+                                    "China regulatory: using Brave Web Search results after Google CSE 429"
+                                )
+                                return brave
+                            if attempt + 1 < max_attempts:
+                                backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                log_warning(
+                                    f"China regulatory Google CSE 429 and Brave returned no URLs; "
+                                    f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                                )
+                            else:
+                                log_warning(
+                                    "China regulatory Google CSE 429 and Brave returned no URLs; "
+                                    "no further Google retries."
+                                )
+                                backoff_s = None
                         elif sc in (502, 503):
                             backoff_s = min(45.0, 1.5 * (2**attempt) + random.uniform(0.0, 0.5))
                             log_warning(
@@ -396,12 +410,27 @@ class ChinaRegulatoryAgent:
                     except httpx.HTTPStatusError as e:
                         est = e.response.status_code
                         if est == 429:
-                            try_brave_after_429 = True
-                            backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
                             log_warning(
-                                f"China regulatory Google CSE HTTPStatusError 429; "
-                                f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                                "China regulatory Google CSE HTTPStatusError 429; trying Brave Web Search."
                             )
+                            brave = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
+                            if brave:
+                                log_warning(
+                                    "China regulatory: using Brave Web Search results after Google CSE 429"
+                                )
+                                return brave
+                            if attempt + 1 < max_attempts:
+                                backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                log_warning(
+                                    f"China regulatory Google CSE 429 and Brave returned no URLs; "
+                                    f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                                )
+                            else:
+                                log_warning(
+                                    "China regulatory Google CSE 429 and Brave returned no URLs; "
+                                    "no further Google retries."
+                                )
+                                backoff_s = None
                         elif est in (502, 503):
                             backoff_s = min(45.0, 1.5 * (2**attempt) + random.uniform(0.0, 0.5))
                             log_warning(
@@ -415,21 +444,13 @@ class ChinaRegulatoryAgent:
                         log_error(e, "China regulatory CSE")
                         return []
 
-                if try_brave_after_429:
-                    brave = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
-                    if brave:
-                        log_warning(
-                            "China regulatory: using Brave Web Search results after Google CSE 429"
-                        )
-                        return brave
-
                 if backoff_s is not None:
                     await asyncio.sleep(backoff_s)
                     continue
 
         log_warning(
-            f"China regulatory Google CSE gave only 429/5xx after {max_attempts} attempt(s); "
-            "trying Brave Web Search once before giving up."
+            f"China regulatory Google CSE still failing after {max_attempts} attempt(s) "
+            "(502/503/network); trying Brave Web Search once before giving up."
         )
         brave_last = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
         if brave_last:

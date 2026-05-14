@@ -199,9 +199,8 @@ class GoogleSearchAgent:
             print(f"✅ Found {len(urls)} URLs via Brave Web Search (Google CSE rate-limited)")
         return urls
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
     async def _make_google_search(self, query: str, num_results: int = 10, search_instructions: str = None) -> List[str]:
-        """Make Google Custom Search Engine API request with retry logic"""
+        """Google CSE: on 429 try Brave first; if Brave has no URLs, exponential backoff then retry Google."""
         await rate_limiter.acquire("google_search")
 
         headers = {
@@ -230,85 +229,112 @@ class GoogleSearchAgent:
             seen_br.add(kl)
             brave_variants.append(bq)
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            start_time = asyncio.get_event_loop().time()
-            last_data: Dict[str, Any] = {}
-            last_status = 200
+        rounds = max(1, settings.GOOGLE_SEARCH_CSE_429_BACKOFF_ROUNDS)
+        brave_key = bool((settings.BRAVE_API_KEY or "").strip())
 
-            try:
-                for q_try in variants:
-                    params = {
-                        "key": self.api_key,
-                        "cx": self.search_engine_id,
-                        "q": q_try,
-                        "num": min(num_results, 10),
-                        "safe": "off",
-                    }
-                    response = await client.get(self.base_url, params=params, headers=headers)
-                    if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
-                        print("⚠️ Google CSE returned 429; trying Brave Web Search")
+        for attempt in range(rounds):
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                start_time = asyncio.get_event_loop().time()
+                last_data: Dict[str, Any] = {}
+                last_status = 200
+
+                try:
+                    for q_try in variants:
+                        params = {
+                            "key": self.api_key,
+                            "cx": self.search_engine_id,
+                            "q": q_try,
+                            "num": min(num_results, 10),
+                            "safe": "off",
+                        }
+                        response = await client.get(self.base_url, params=params, headers=headers)
+                        if response.status_code == 429 and brave_key:
+                            log_warning("Google CSE returned 429; trying Brave Web Search")
+                            urls = await self._brave_search_urls(brave_variants, num_results)
+                            if urls:
+                                print(f"✅ Found {len(urls)} URLs via Brave Web Search (Google CSE rate-limited)")
+                                return urls[:num_results]
+                            if attempt + 1 < rounds:
+                                backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                log_warning(
+                                    f"Google CSE 429 and Brave returned no URLs; "
+                                    f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{rounds})"
+                                )
+                                await asyncio.sleep(backoff_s)
+                            else:
+                                log_warning("Google CSE 429 and Brave returned no URLs; exhausted backoff rounds.")
+                            break
+                        response.raise_for_status()
+                        last_status = response.status_code
+                        data = response.json()
+                        last_data = data
+                        urls = self._urls_from_cse_payload(data)
+                        if urls:
+                            end_time = asyncio.get_event_loop().time()
+                            log_api_call(
+                                "google_search",
+                                "google_cse_search",
+                                response.status_code,
+                                end_time - start_time,
+                            )
+                            print(f"✅ Found {len(urls)} URLs using Google CSE API ({len(q_try)} char query)")
+                            return urls
+                        si = data.get("searchInformation") or {}
+                        tr = si.get("totalResults")
+                        print(
+                            f"⚠️ CSE returned no items (query len={len(q_try)}, totalResults={tr!r}); trying shorter variant…"
+                        )
+
+                    else:
+                        end_time = asyncio.get_event_loop().time()
+                        log_api_call("google_search", "google_cse_search", last_status, end_time - start_time)
+                        print(f"⚠️ No results found in Google CSE API response after {len(variants)} query variant(s)")
+                        if last_data:
+                            err = last_data.get("error")
+                            if err:
+                                print(f"   CSE error object: {err}")
+                        return await self._fallback_search(query, num_results, search_instructions)
+
+                    continue
+
+                except httpx.HTTPStatusError as e:
+                    if e.response is not None and e.response.status_code == 429 and brave_key:
+                        log_warning("Google CSE HTTP 429; trying Brave Web Search")
                         urls = await self._brave_search_urls(brave_variants, num_results)
                         if urls:
+                            print(f"✅ Found {len(urls)} URLs via Brave Web Search (Google CSE HTTP 429)")
                             return urls[:num_results]
-                        print("⚠️ Brave Search returned no URLs after Google 429")
-                        return []
-                    response.raise_for_status()
-                    last_status = response.status_code
-                    data = response.json()
-                    last_data = data
-                    urls = self._urls_from_cse_payload(data)
-                    if urls:
-                        end_time = asyncio.get_event_loop().time()
-                        log_api_call(
-                            "google_search",
-                            "google_cse_search",
-                            response.status_code,
-                            end_time - start_time,
-                        )
-                        print(f"✅ Found {len(urls)} URLs using Google CSE API ({len(q_try)} char query)")
-                        return urls
-                    si = data.get("searchInformation") or {}
-                    tr = si.get("totalResults")
-                    print(
-                        f"⚠️ CSE returned no items (query len={len(q_try)}, totalResults={tr!r}); trying shorter variant…"
-                    )
+                        if attempt + 1 < rounds:
+                            backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                            log_warning(
+                                f"Google CSE HTTP 429 and Brave returned no URLs; "
+                                f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{rounds})"
+                            )
+                            await asyncio.sleep(backoff_s)
+                        else:
+                            log_warning("Google CSE HTTP 429 and Brave returned no URLs; exhausted backoff rounds.")
+                        continue
+                    est = e.response.status_code if e.response is not None else 0
+                    error_detail = f"Google CSE API error: {est}"
+                    try:
+                        if e.response is not None:
+                            error_detail += f" - {e.response.text[:200]}"
+                    except Exception:
+                        pass
+                    log_error(e, error_detail)
 
-                end_time = asyncio.get_event_loop().time()
-                log_api_call("google_search", "google_cse_search", last_status, end_time - start_time)
-                print(f"⚠️ No results found in Google CSE API response after {len(variants)} query variant(s)")
-                if last_data:
-                    err = last_data.get("error")
-                    if err:
-                        print(f"   CSE error object: {err}")
-                return await self._fallback_search(query, num_results, search_instructions)
+                    if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
+                        print("⚠️ Google API key suspended, using mock data")
+                        return await self._get_mock_urls(query, num_results)
 
-            except httpx.HTTPStatusError as e:
-                if e.response is not None and e.response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
-                    print("⚠️ Google CSE HTTP 429; trying Brave Web Search")
-                    urls = await self._brave_search_urls(brave_variants, num_results)
-                    if urls:
-                        return urls[:num_results]
-                    print("⚠️ Brave Search returned no URLs after Google CSE HTTP 429")
-                    return []
-                est = e.response.status_code if e.response is not None else 0
-                error_detail = f"Google CSE API error: {est}"
-                try:
-                    if e.response is not None:
-                        error_detail += f" - {e.response.text[:200]}"
-                except Exception:
-                    pass
-                log_error(e, error_detail)
+                    print("⚠️ Google CSE API error, trying fallback search")
+                    return await self._fallback_search(query, num_results, search_instructions)
+                except Exception as e:
+                    log_error(e, "Google CSE API search")
+                    print("⚠️ Google CSE API error, trying fallback")
+                    return await self._fallback_search(query, num_results, search_instructions)
 
-                if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
-                    print("⚠️ Google API key suspended, using mock data")
-                    return await self._get_mock_urls(query, num_results)
-
-                print("⚠️ Google CSE API error, trying fallback search")
-                return await self._fallback_search(query, num_results, search_instructions)
-            except Exception as e:
-                log_error(e, "Google CSE API search")
-                print("⚠️ Google CSE API error, trying fallback")
-                return await self._fallback_search(query, num_results, search_instructions)
+        return await self._fallback_search(query, num_results, search_instructions)
     
     async def _get_mock_urls(self, query: str, num_results: int) -> List[str]:
         """Provide mock URLs when API is unavailable"""
@@ -349,70 +375,121 @@ class GoogleSearchAgent:
                 seen_br.add(kl)
                 brave_variants.append(bq)
 
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                try:
-                    for q_try in variants:
-                        params = {
-                            "key": self.api_key,
-                            "cx": self.search_engine_id,
-                            "q": q_try,
-                            "num": min(num_results, 10),
-                            "safe": "off",
-                        }
-                        response = await client.get(self.base_url, params=params, headers=headers)
-                        if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
-                            urls = await self._brave_search_urls(brave_variants, num_results)
-                            if urls:
-                                print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
-                                return urls[:num_results]
-                            return []
-                        response.raise_for_status()
-                        data = response.json()
-                        urls = self._urls_from_cse_payload(data)
-                        if urls:
-                            print(f"✅ Found {len(urls)} URLs using fallback search")
-                            return urls[:num_results]
+            rounds = max(1, settings.GOOGLE_SEARCH_CSE_429_BACKOFF_ROUNDS)
+            brave_key = bool((settings.BRAVE_API_KEY or "").strip())
 
-                    short = _clip_cse_query(query, 220)
-                    tail = (short.split() or [""])[-1] if short else ""
-                    for extra in ("news", "FDA", "clinical trial", tail):
-                        if not extra or len(extra) < 2:
+            for attempt in range(rounds):
+                restart_round = False
+                async with httpx.AsyncClient(timeout=self.timeout) as client:
+                    try:
+                        for q_try in variants:
+                            params = {
+                                "key": self.api_key,
+                                "cx": self.search_engine_id,
+                                "q": q_try,
+                                "num": min(num_results, 10),
+                                "safe": "off",
+                            }
+                            response = await client.get(self.base_url, params=params, headers=headers)
+                            if response.status_code == 429 and brave_key:
+                                log_warning("Google CSE returned 429 (fallback); trying Brave Web Search")
+                                urls = await self._brave_search_urls(brave_variants, num_results)
+                                if urls:
+                                    print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
+                                    return urls[:num_results]
+                                if attempt + 1 < rounds:
+                                    backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                    log_warning(
+                                        f"Google CSE 429 (fallback) and Brave returned no URLs; "
+                                        f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{rounds})"
+                                    )
+                                    await asyncio.sleep(backoff_s)
+                                else:
+                                    log_warning(
+                                        "Google CSE 429 (fallback) and Brave returned no URLs; exhausted rounds."
+                                    )
+                                restart_round = True
+                                break
+                            response.raise_for_status()
+                            data = response.json()
+                            urls = self._urls_from_cse_payload(data)
+                            if urls:
+                                print(f"✅ Found {len(urls)} URLs using fallback search")
+                                return urls[:num_results]
+
+                        if restart_round:
                             continue
-                        q_news = _clip_cse_query(f"{short} {extra}", 380)
-                        print("🔄 Trying even broader search")
-                        params = {
-                            "key": self.api_key,
-                            "cx": self.search_engine_id,
-                            "q": q_news,
-                            "num": min(num_results, 10),
-                            "safe": "off",
-                        }
-                        response = await client.get(self.base_url, params=params, headers=headers)
-                        if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+
+                        short = _clip_cse_query(query, 220)
+                        tail = (short.split() or [""])[-1] if short else ""
+                        for extra in ("news", "FDA", "clinical trial", tail):
+                            if not extra or len(extra) < 2:
+                                continue
+                            q_news = _clip_cse_query(f"{short} {extra}", 380)
+                            print("🔄 Trying even broader search")
+                            params = {
+                                "key": self.api_key,
+                                "cx": self.search_engine_id,
+                                "q": q_news,
+                                "num": min(num_results, 10),
+                                "safe": "off",
+                            }
+                            response = await client.get(self.base_url, params=params, headers=headers)
+                            if response.status_code == 429 and brave_key:
+                                log_warning("Google CSE returned 429 (fallback broad); trying Brave Web Search")
+                                urls = await self._brave_search_urls(brave_variants, num_results)
+                                if urls:
+                                    print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
+                                    return urls[:num_results]
+                                if attempt + 1 < rounds:
+                                    backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                    log_warning(
+                                        f"Google CSE 429 (fallback broad) and Brave returned no URLs; "
+                                        f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{rounds})"
+                                    )
+                                    await asyncio.sleep(backoff_s)
+                                else:
+                                    log_warning(
+                                        "Google CSE 429 (fallback broad) and Brave empty; exhausted rounds."
+                                    )
+                                restart_round = True
+                                break
+                            response.raise_for_status()
+                            data = response.json()
+                            urls = self._urls_from_cse_payload(data)
+                            if urls:
+                                return urls[:num_results]
+
+                        if restart_round:
+                            continue
+
+                        return []
+
+                    except httpx.HTTPStatusError as e:
+                        if e.response is not None and e.response.status_code == 429 and brave_key:
+                            log_warning("Google CSE HTTP 429 (fallback); trying Brave Web Search")
                             urls = await self._brave_search_urls(brave_variants, num_results)
                             if urls:
-                                print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
+                                print(f"✅ Found {len(urls)} URLs via Brave (Google CSE HTTP 429 in fallback)")
                                 return urls[:num_results]
-                            return []
-                        response.raise_for_status()
-                        data = response.json()
-                        urls = self._urls_from_cse_payload(data)
-                        if urls:
-                            return urls[:num_results]
+                            if attempt + 1 < rounds:
+                                backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                                log_warning(
+                                    f"Google CSE HTTP 429 (fallback) and Brave returned no URLs; "
+                                    f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{rounds})"
+                                )
+                                await asyncio.sleep(backoff_s)
+                            else:
+                                log_warning(
+                                    "Google CSE HTTP 429 (fallback) and Brave returned no URLs; exhausted rounds."
+                                )
+                            continue
+                        if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
+                            print("⚠️ Google API key suspended in fallback, using mock data")
+                            return await self._get_mock_urls(query, num_results)
+                        raise e
 
-                    return []
-
-                except httpx.HTTPStatusError as e:
-                    if e.response is not None and e.response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
-                        urls = await self._brave_search_urls(brave_variants, num_results)
-                        if urls:
-                            print(f"✅ Found {len(urls)} URLs via Brave (Google CSE HTTP 429 in fallback)")
-                            return urls[:num_results]
-                        return []
-                    if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
-                        print("⚠️ Google API key suspended in fallback, using mock data")
-                        return await self._get_mock_urls(query, num_results)
-                    raise e
+            return []
 
         except Exception as e:
             print(f"⚠️ Fallback search also failed: {e}")

@@ -167,6 +167,8 @@ class Settings(BaseSettings):
     # Optional second CSE restricted to CDE/NMPA/zwfw hosts (omit redundant site: in query when set)
     GOOGLE_CSE_CHINA_ENGINE_ID: str = os.getenv("GOOGLE_CSE_CHINA_ENGINE_ID", "").strip()
     GOOGLE_CSE_BASE_URL: str = "https://www.googleapis.com/customsearch/v1"
+    # After Google CSE 429, try Brave; if Brave returns no URLs, backoff and retry Google (main + fallback paths).
+    GOOGLE_SEARCH_CSE_429_BACKOFF_ROUNDS: int = int(os.getenv("GOOGLE_SEARCH_CSE_429_BACKOFF_ROUNDS", "6"))
     # Brave Web Search API (used when Google CSE returns HTTP 429). Header: X-Subscription-Token
     BRAVE_API_KEY: str = os.getenv("BRAVE_API_KEY", "").strip()
     BRAVE_WEB_SEARCH_URL: str = (
@@ -192,7 +194,8 @@ class Settings(BaseSettings):
     CHINA_REGULATORY_CSE_NUM_PER_VARIATION: int = int(
         os.getenv("CHINA_REGULATORY_CSE_NUM_PER_VARIATION", "6")
     )
-    # Per-query-stem retries when Google returns 429 / transient 5xx (each attempt re-acquires throttle).
+    # Per-query-stem retries: Google 429 → Brave first; if Brave has no URLs, backoff then retry Google.
+    # Transient 5xx / network errors still use backoff without requiring Brave first.
     CHINA_REGULATORY_CSE_MAX_RETRIES: int = int(os.getenv("CHINA_REGULATORY_CSE_MAX_RETRIES", "10"))
     # Max characters of fetched page text kept per China regulatory result (synthesis context).
     CHINA_REGULATORY_PAGE_MAX_CHARS: int = int(os.getenv("CHINA_REGULATORY_PAGE_MAX_CHARS", "20000"))

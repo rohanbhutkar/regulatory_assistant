@@ -376,6 +376,43 @@ async def _safe_multiagent_ws_send(ws: WebSocket, payload: dict) -> bool:
         return False
 
 
+async def _pump_client_ws_while_query(websocket: WebSocket, query_task: asyncio.Task) -> None:
+    """Read client JSON frames (e.g. keepalive pings) while process_dynamic_query runs.
+
+    Without this, the server never awaits ``receive_json`` during a long query. Some
+    proxies still expect periodic reads on the edge; draining pings also keeps the
+    Starlette/uvicorn receive buffer from growing unbounded if the client pings often.
+    """
+    while not query_task.done():
+        recv_task = asyncio.create_task(websocket.receive_json())
+        done, _ = await asyncio.wait(
+            {query_task, recv_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if recv_task in done:
+            try:
+                side = recv_task.result()
+            except WebSocketDisconnect:
+                if not query_task.done():
+                    query_task.cancel()
+                raise
+            except Exception:
+                if not query_task.done():
+                    query_task.cancel()
+                raise
+            if isinstance(side, dict) and side.get("type") == "ping":
+                await _safe_multiagent_ws_send(websocket, {"type": "pong"})
+            else:
+                logger.debug(
+                    "WS message during active query (ignored): type=%s",
+                    side.get("type") if isinstance(side, dict) else type(side).__name__,
+                )
+        else:
+            recv_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await recv_task
+
+
 # WebSocket endpoint for multi-agent research (port 8001 style)
 @app.websocket("/ws/{client_id}")
 async def websocket_multiagent(websocket: WebSocket, client_id: str):
@@ -462,18 +499,27 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
                             f"📤 Sent progress update: {progress_data.get('node_id')} - {progress_data.get('status')}"
                         )
                     
-                    # Process query through DynamicReasoningEngine with study context and trials
-                    response = await reasoning_engine.process_dynamic_query(
-                        query=query,
-                        include_graph_plan=True,
-                        conversation_history=conversation_history,
-                        progress_callback=progress_callback,
-                        study_context=study_context,
-                        selected_trials=selected_trials,
-                        regulatory_documents=regulatory_documents,
-                        selected_agents=selected_agents,
-                        deep_research=deep_research,
+                    query_task = asyncio.create_task(
+                        reasoning_engine.process_dynamic_query(
+                            query=query,
+                            include_graph_plan=True,
+                            conversation_history=conversation_history,
+                            progress_callback=progress_callback,
+                            study_context=study_context,
+                            selected_trials=selected_trials,
+                            regulatory_documents=regulatory_documents,
+                            selected_agents=selected_agents,
+                            deep_research=deep_research,
+                        )
                     )
+                    try:
+                        await _pump_client_ws_while_query(websocket, query_task)
+                        response = query_task.result()
+                    finally:
+                        if not query_task.done():
+                            query_task.cancel()
+                            with suppress(asyncio.CancelledError):
+                                await query_task
                     
                     # Send query_started with graph plan if it wasn't sent during execution
                     # (this handles cases where progress_callback wasn't called with graph plan)

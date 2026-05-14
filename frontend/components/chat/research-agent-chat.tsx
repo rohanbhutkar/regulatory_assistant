@@ -230,6 +230,45 @@ function asTrimmedStringArray(v: unknown): string[] {
     .filter(Boolean)
 }
 
+/** Base URL for research WS, e.g. wss://api.example.com/ws (no trailing slash). */
+function getResearchWebSocketBaseUrl(): string {
+  const api = process.env.NEXT_PUBLIC_API_URL?.trim()
+  if (api) {
+    const u = api.replace(/\/$/, "")
+    if (u.startsWith("https://")) return `${u.replace(/^https/, "wss")}/ws`
+    if (u.startsWith("http://")) return `${u.replace(/^http/, "ws")}/ws`
+    return `${u}/ws`
+  }
+  const raw = process.env.NEXT_PUBLIC_AGENT_WS_URL?.trim()
+  if (raw) {
+    let b = raw.replace(/\/$/, "")
+    if (b.startsWith("https://")) b = `wss://${b.slice(8)}`
+    else if (b.startsWith("http://")) b = `ws://${b.slice(7)}`
+    if (!/\/ws$/i.test(b)) {
+      b = `${b.replace(/\/?$/, "")}/ws`
+    }
+    return b
+  }
+  return "ws://127.0.0.1:8001/ws"
+}
+
+/** When the page is HTTPS, never use insecure ws:// to the same host (mixed content / flaky proxies). */
+function researchWebSocketUrlForBrowser(clientId: string): string {
+  let base = getResearchWebSocketBaseUrl()
+  if (typeof window !== "undefined" && window.location.protocol === "https:" && base.startsWith("ws://")) {
+    try {
+      const pageHost = window.location.hostname
+      const u = new URL(base)
+      if (u.hostname === pageHost || pageHost.endsWith(`.${u.hostname}`)) {
+        base = `wss://${u.host}${u.pathname}`.replace(/\/$/, "")
+      }
+    } catch {
+      /* keep base */
+    }
+  }
+  return `${base.replace(/\/$/, "")}/${encodeURIComponent(clientId)}`
+}
+
 /** HTTP base for the multi-agent backend (align with NEXT_PUBLIC_AGENT_WS_URL host when API URL unset). */
 function getAgentHttpBase(): string {
   const explicit = process.env.NEXT_PUBLIC_API_URL?.trim()
@@ -1090,10 +1129,9 @@ export function ResearchAgentChat({
     }
 
     try {
-      // Try to connect to Multi-Agent Backend WebSocket (port 8001)
-      const wsUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL || "ws://127.0.0.1:8001/ws"
+      // Multi-agent WebSocket: prefer wss when page is HTTPS; align with NEXT_PUBLIC_API_URL when set.
       const clientId = `client-${Date.now()}`
-      const ws = new WebSocket(`${wsUrl}/${clientId}`)
+      const ws = new WebSocket(researchWebSocketUrlForBrowser(clientId))
       wsRef.current = ws
 
       ws.onopen = () => {
@@ -1103,12 +1141,12 @@ export function ResearchAgentChat({
         setLiveExecutionTrace([])
         drTimelineLenRef.current = 0
 
-        // Start keep-alive ping every 30 seconds
+        // Keep-alive: under many ALB/CloudFront defaults, ~60s idle is risky; 20s + server-side drain is safer.
         const pingInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "ping" }))
           }
-        }, 30000)
+        }, 20000)
         
         // Store ping interval on WebSocket for cleanup
         ;(ws as any).pingInterval = pingInterval
@@ -1625,7 +1663,9 @@ export function ResearchAgentChat({
         }
       }
       
-      ws.onerror = () => {}
+      ws.onerror = (ev) => {
+        console.warn("Research WebSocket error", ev)
+      }
 
       ws.addEventListener("close", () => {
         const ping = (ws as { pingInterval?: ReturnType<typeof setInterval> }).pingInterval
