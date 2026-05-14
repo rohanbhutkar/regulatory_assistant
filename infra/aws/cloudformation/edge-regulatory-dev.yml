@@ -191,9 +191,9 @@ Resources:
             CustomOriginConfig:
               HTTPSPort: 443
               OriginProtocolPolicy: https-only
-              # POST /api/research/query can run many minutes; keepalives reset inter-chunk timeout.
-              # 180s is the CloudFront maximum for this setting.
-              OriginReadTimeout: 180
+              # POST /api/research/query can run a long time; inter-chunk responses reset the read timer.
+              # CustomOriginConfig OriginReadTimeout is 1–120s per CloudFront API (not 180).
+              OriginReadTimeout: 120
               OriginKeepaliveTimeout: 60
               OriginSSLProtocols:
                 - TLSv1.2
