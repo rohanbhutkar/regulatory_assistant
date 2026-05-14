@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.china_regulatory_agent import (
-    SITE_CLAUSE,
     ChinaRegulatoryAgent,
     _build_cse_query,
     _classify_portal,
@@ -19,7 +18,6 @@ from agents.china_regulatory_agent import (
     _relevance_score,
     _stem_instructions,
     _terms_for_relevance,
-    _url_path_quality,
 )
 
 
@@ -29,13 +27,14 @@ def test_classify_portal() -> None:
     assert _classify_portal("https://www.nmpa.gov.cn/y") == "nmpa_root"
 
 
-def test_build_cse_query_without_restricted_cx(monkeypatch) -> None:
+def test_build_cse_query_no_site_operators(monkeypatch) -> None:
     from config import settings
 
     monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
     q = _build_cse_query("抗肿瘤 指导原则", "recent")
-    assert SITE_CLAUSE.split()[0] in q
-    assert "cde.org.cn" in q
+    assert "site:" not in q.lower()
+    assert "抗肿瘤" in q
+    assert "recent" in q
 
 
 def test_expand_query_variations_multiple_angles() -> None:
@@ -55,13 +54,17 @@ def test_merge_url_batches_dedupes_preserves_order() -> None:
     assert m == ["https://a/1", "https://b/2", "https://c/3"]
 
 
-def test_rank_urls_prefers_detail_over_home() -> None:
+def test_rank_urls_dedupes_preserves_order() -> None:
     urls = [
         "https://www.cde.org.cn/",
         "https://www.cde.org.cn/main/news/viewInfoCommon/abc123",
+        "https://www.cde.org.cn/",
     ]
     ranked = _rank_urls_by_quality(urls)
-    assert "viewInfoCommon" in ranked[0]
+    assert ranked == [
+        "https://www.cde.org.cn/",
+        "https://www.cde.org.cn/main/news/viewInfoCommon/abc123",
+    ]
 
 
 def test_terms_for_relevance_includes_cjk() -> None:
@@ -85,22 +88,16 @@ def test_stem_instructions_secondary_variation_gets_tail() -> None:
     assert s1 is not None
 
 
-def test_url_path_quality_news_higher_than_root() -> None:
-    assert _url_path_quality("https://www.cde.org.cn/main/news/viewInfoCommon/x") > _url_path_quality(
-        "https://www.cde.org.cn/"
-    )
-
-
-def test_build_cse_query_with_restricted_cx(monkeypatch) -> None:
+def test_build_cse_query_with_china_engine_id_same_plain_q(monkeypatch) -> None:
     from config import settings
 
     monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "abc123")
     q = _build_cse_query("抗肿瘤 指导原则", None)
-    assert "site:cde.org.cn" not in q
+    assert "site:" not in q.lower()
     assert "抗肿瘤" in q
 
 
-def test_rank_urls_prefers_official_then_cn_then_path() -> None:
+def test_rank_urls_preserves_first_seen_order() -> None:
     mixed = [
         "https://fda.gov/a",
         "https://www.cde.org.cn/main/x",
@@ -108,12 +105,7 @@ def test_rank_urls_prefers_official_then_cn_then_path() -> None:
         "https://www.gov.cn/foo",
         "https://www.nmpa.gov.cn/y",
     ]
-    out = _rank_urls_by_quality(mixed)
-    assert out[0] == "https://www.cde.org.cn/main/x"
-    assert out[1] == "https://www.nmpa.gov.cn/y"
-    assert "https://www.gov.cn/foo" in out
-    assert "https://fda.gov/a" in out
-    assert out.index("https://www.gov.cn/foo") < out.index("https://fda.gov/a")
+    assert _rank_urls_by_quality(mixed) == mixed
 
 
 @pytest.mark.asyncio
@@ -278,7 +270,8 @@ async def test_search_regulatory_cse_and_fetch(monkeypatch) -> None:
     cargs, ckwargs = mock_client.get.call_args_list[0]
     assert "customsearch" in str(cargs[0])
     params = ckwargs.get("params") or {}
-    assert "site:cde.org.cn" in params.get("q", "")
+    assert "site:" not in (params.get("q") or "").lower()
+    assert "抗肿瘤" in params.get("q", "")
 
     mock_set.assert_called_once()
 

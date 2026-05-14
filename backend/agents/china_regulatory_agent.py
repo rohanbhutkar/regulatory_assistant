@@ -2,7 +2,7 @@
 CDE / NMPA / zwfw regulatory web discovery via Google CSE + HTML text extraction.
 
 Runs multiple query variations in parallel (EMA-style multi-angle coverage), merges and
-ranks URLs, then fetches excerpts concurrently. Optional LLM English snippet in
+dedupes URLs, then fetches excerpts concurrently. Optional LLM English snippet in
 metadata["content_en"] (off by default).
 """
 from __future__ import annotations
@@ -25,31 +25,9 @@ from utils.logger import log_api_call, log_error, log_warning
 from utils.rate_limiter import rate_limiter
 from utils.brave_web_search import clip_brave_query, fetch_brave_web_urls
 
-SITE_CLAUSE = "(site:cde.org.cn OR site:nmpa.gov.cn OR site:zwfw.nmpa.gov.cn)"
-
 # Graph execution runs many china_regulatory nodes concurrently; Google CSE is strict per-second.
 # Serialize all Custom Search HTTP calls process-wide (lock is cheap vs 429 storm).
 _CHINA_CSE_HTTP_LOCK = asyncio.Lock()
-
-
-def _china_regulatory_official_host(host: str) -> bool:
-    h = (host or "").lower()
-    if h.startswith("www."):
-        h = h[4:]
-    if not h:
-        return False
-    return h == "cde.org.cn" or h.endswith(".cde.org.cn") or h == "nmpa.gov.cn" or h.endswith(".nmpa.gov.cn")
-
-
-def _china_host_tier_scores(u: str) -> tuple[int, int]:
-    """(official_regulatory, cn_tld) for URL ordering — same rules for Google CSE and Brave."""
-    try:
-        hn = (urlparse(u).netloc or "").lower()
-    except Exception:
-        return (0, 0)
-    official = 1 if _china_regulatory_official_host(hn) else 0
-    cn = 1 if ".cn" in hn else 0
-    return (official, cn)
 
 
 def _dedupe_url_list(urls: List[str]) -> List[str]:
@@ -65,28 +43,12 @@ def _dedupe_url_list(urls: List[str]) -> List[str]:
 
 
 def _china_brave_query_variants(cse_query: str) -> List[str]:
-    """Query stems for Brave when mirroring Google CSE strings (use ``operators=true`` at call site)."""
+    """Single clipped query for Brave (no ``site:`` or other search operators)."""
     raw = (cse_query or "").strip()
-    seen: set[str] = set()
-    out: List[str] = []
-
-    def add(s: str) -> None:
-        b = clip_brave_query(s)
-        if len(b) < 2:
-            return
-        k = b.lower()
-        if k in seen:
-            return
-        seen.add(k)
-        out.append(b)
-
-    add(raw)
-    if SITE_CLAUSE in raw:
-        core = re.sub(r"\s+", " ", raw.replace(SITE_CLAUSE, "").strip())
-        if len(core) >= 2:
-            add(f"{core} (site:cde.org.cn OR site:nmpa.gov.cn OR site:zwfw.nmpa.gov.cn)")
-            add(f"{core} site:cde.org.cn")
-    return out[:8]
+    if len(raw) < 2:
+        return []
+    b = clip_brave_query(raw)
+    return [b] if len(b) >= 2 else []
 
 
 def _classify_portal(url: str) -> str:
@@ -110,11 +72,7 @@ def _build_cse_query(query: str, search_instructions: Optional[str]) -> str:
     ins = (search_instructions or "").strip()
     if ins and len(q) + len(ins) + 1 < 200:
         q = f"{q} {ins}".strip()
-    use_restricted_cx = bool(settings.GOOGLE_CSE_CHINA_ENGINE_ID)
-    if use_restricted_cx:
-        full = q
-    else:
-        full = f"{SITE_CLAUSE} {q}".strip()
+    full = q
     if len(full) > 2000:
         full = full[:1995] + "…"
     return full
@@ -197,46 +155,9 @@ def _merge_url_batches(batches: List[object]) -> List[str]:
     return out
 
 
-def _url_path_quality(url: str) -> float:
-    """Soft ranking: prefer guidance, disclosure, and news detail paths over bare homepages."""
-    try:
-        p = urlparse(url)
-        path = (p.path or "").lower()
-        full = url.lower()
-    except Exception:
-        return 0.0
-    score = 0.0
-    if "zdyz" in path or "zdyz" in full:
-        score += 0.35
-    if "viewinfocommon" in path or "/main/news/" in path:
-        score += 0.28
-    if "xxgk" in path or "ggtg" in path or "ypggtg" in path:
-        score += 0.22
-    if "hymlj" in path or "listpage" in path:
-        score += 0.15
-    if path.rstrip("/").endswith((".pdf", ".doc", ".docx")):
-        score -= 0.15
-    if path in ("", "/") or path.rstrip("/") in ("/main", "/web", "/web/index"):
-        score -= 0.25
-    for y in ("2026", "2025", "2024"):
-        if y in full:
-            score += 0.06
-            break
-    return max(-0.5, min(score, 1.0))
-
-
 def _rank_urls_by_quality(urls: List[str]) -> List[str]:
-    """Dedupe; order Google CSE and Brave URLs alike: official hosts, other ``.cn``, then path quality."""
-    urls = _dedupe_url_list(urls)
-    if not urls:
-        return []
-    rows: List[tuple[int, int, int, float, str]] = []
-    for i, u in enumerate(urls):
-        off, cn = _china_host_tier_scores(u)
-        pq = _url_path_quality(u)
-        rows.append((i, off, cn, pq, u))
-    rows.sort(key=lambda r: (-r[1], -r[2], -r[3], r[0]))
-    return [r[4] for r in rows]
+    """Dedupe merged URL lists while preserving first-seen order (no host or path re-ordering)."""
+    return _dedupe_url_list(urls)
 
 
 def _terms_for_relevance(blob: str) -> List[str]:
@@ -337,7 +258,7 @@ class ChinaRegulatoryAgent:
         return (settings.GOOGLE_CSE_CHINA_ENGINE_ID or settings.GOOGLE_SEARCH_ENGINE_ID or "").strip()
 
     async def _try_brave_cse_fallback(self, cse_query: str, num_results: int) -> List[str]:
-        """Brave Web Search with ``site:`` operators; keep only CDE/NMPA/zwfw hosts."""
+        """Brave Web Search using the same plain query string as CSE (no operators or geo filters)."""
         if not (settings.BRAVE_API_KEY or "").strip():
             return []
         variants = _china_brave_query_variants(cse_query)
@@ -347,8 +268,7 @@ class ChinaRegulatoryAgent:
             variants,
             num_results=min(max(1, num_results), 20),
             timeout=self.timeout,
-            operators=True,
-            country="CN",
+            operators=False,
         )
         return _rank_urls_by_quality(raw)[:num_results]
 
@@ -579,7 +499,7 @@ class ChinaRegulatoryAgent:
         relevance_blob = " ".join(stems + ([search_instructions] if search_instructions else []))
 
         cache_key = (
-            f"china_regulatory:v4:{max_results}:{mv}:{num_per}:"
+            f"china_regulatory:v5:{max_results}:{mv}:{num_per}:"
             f"{query}:{search_instructions or ''}"
         )
         cached = cache_manager.get(cache_key)
@@ -648,7 +568,7 @@ class ChinaRegulatoryAgent:
             if len(results) >= max_results:
                 break
 
-        results.sort(key=lambda r: (-(r.relevance_score or 0), -_url_path_quality(r.url)))
+        results.sort(key=lambda r: -(r.relevance_score or 0))
 
         if results:
             cache_manager.set(cache_key, [r.model_dump() for r in results])
