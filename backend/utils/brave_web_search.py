@@ -7,12 +7,32 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import urlparse
 
 import httpx
 
 from config import settings
 from utils.logger import log_api_call, log_error, log_warning
 from utils.rate_limiter import rate_limiter
+
+_DEFAULT_BRAVE_WEB_URL = "https://api.search.brave.com/res/v1/web/search"
+
+
+def resolved_brave_web_search_url(base: str) -> str:
+    """Ensure GET target is the Web Search resource (common misconfig: host only, no /res/v1/...)."""
+    b = (base or "").strip().rstrip("/")
+    if not b:
+        return _DEFAULT_BRAVE_WEB_URL
+    if "/res/v1/web/search" in b:
+        return b if b.startswith("http") else f"https://{b}"
+    host = ""
+    try:
+        host = urlparse(b).netloc.lower()
+    except Exception:
+        pass
+    if host == "api.search.brave.com" or host.endswith(".api.search.brave.com"):
+        return f"{b}/res/v1/web/search"
+    return b if b.startswith("http") else f"https://{b}"
 
 
 def clip_brave_query(q: str) -> str:
@@ -51,6 +71,8 @@ async def fetch_brave_web_urls(
     num_results: int,
     timeout: Union[httpx.Timeout, float],
     operators: bool = False,
+    country: Optional[str] = None,
+    search_lang: Optional[str] = None,
 ) -> List[str]:
     """
     Call Brave Web Search for each variant until one returns web URLs.
@@ -62,7 +84,9 @@ async def fetch_brave_web_urls(
         return []
 
     await rate_limiter.acquire("brave_search")
-    base = (settings.BRAVE_WEB_SEARCH_URL or "https://api.search.brave.com/res/v1/web/search").strip()
+    base = resolved_brave_web_search_url(
+        settings.BRAVE_WEB_SEARCH_URL or _DEFAULT_BRAVE_WEB_URL
+    )
     headers = {
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
@@ -82,6 +106,10 @@ async def fetch_brave_web_urls(
                 "result_filter": "web",
                 "safesearch": "off",
             }
+            if country:
+                params["country"] = country
+            if search_lang:
+                params["search_lang"] = search_lang
             if operators:
                 params["operators"] = "true"
             t0 = asyncio.get_event_loop().time()
@@ -102,6 +130,11 @@ async def fetch_brave_web_urls(
                 if urls:
                     log_api_call("brave_search", "brave_web_search", sc, elapsed)
                     return urls[:num_results]
+                web = data.get("web") if isinstance(data, dict) else None
+                if isinstance(web, dict) and web.get("results") == []:
+                    log_warning(
+                        f"Brave Web Search returned 200 with empty web.results (query len={len(q_try)})."
+                    )
                 continue
             if sc == 429:
                 log_warning(

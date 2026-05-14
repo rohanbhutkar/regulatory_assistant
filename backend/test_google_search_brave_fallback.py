@@ -5,7 +5,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.fierce_pharma_agent import GoogleSearchAgent
-from utils.brave_web_search import clip_brave_query, urls_from_brave_payload
+from utils.brave_web_search import clip_brave_query, resolved_brave_web_search_url, urls_from_brave_payload
+
+
+def test_resolved_brave_web_search_url_host_only_gets_path() -> None:
+    assert resolved_brave_web_search_url("") == "https://api.search.brave.com/res/v1/web/search"
+    assert (
+        resolved_brave_web_search_url("https://api.search.brave.com")
+        == "https://api.search.brave.com/res/v1/web/search"
+    )
+    assert resolved_brave_web_search_url(
+        "https://api.search.brave.com/res/v1/web/search"
+    ) == "https://api.search.brave.com/res/v1/web/search"
 
 
 def test_clip_brave_query_word_and_char_limits() -> None:
@@ -97,6 +108,8 @@ async def test_google_429_brave_empty_then_google_after_backoff(monkeypatch) -> 
     assert brave_mock.await_count == 1
     assert mock_client.get.call_count == 2
     assert sleep_mock.await_count == 1
+
+
 @pytest.mark.asyncio
 async def test_brave_search_urls_parses_web_results(monkeypatch) -> None:
     from config import settings

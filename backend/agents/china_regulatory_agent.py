@@ -41,17 +41,26 @@ def _china_regulatory_official_host(host: str) -> bool:
     return h == "cde.org.cn" or h.endswith(".cde.org.cn") or h == "nmpa.gov.cn" or h.endswith(".nmpa.gov.cn")
 
 
-def _filter_china_official_urls(urls: List[str]) -> List[str]:
-    out: List[str] = []
+def _china_host_tier_scores(u: str) -> tuple[int, int]:
+    """(official_regulatory, cn_tld) for URL ordering — same rules for Google CSE and Brave."""
+    try:
+        hn = (urlparse(u).netloc or "").lower()
+    except Exception:
+        return (0, 0)
+    official = 1 if _china_regulatory_official_host(hn) else 0
+    cn = 1 if ".cn" in hn else 0
+    return (official, cn)
+
+
+def _dedupe_url_list(urls: List[str]) -> List[str]:
     seen: set[str] = set()
+    out: List[str] = []
     for u in urls:
-        try:
-            hn = urlparse(u).netloc or ""
-        except Exception:
+        u = (u or "").strip()
+        if not u or u in seen:
             continue
-        if _china_regulatory_official_host(hn) and u not in seen:
-            seen.add(u)
-            out.append(u)
+        seen.add(u)
+        out.append(u)
     return out
 
 
@@ -217,11 +226,17 @@ def _url_path_quality(url: str) -> float:
 
 
 def _rank_urls_by_quality(urls: List[str]) -> List[str]:
+    """Dedupe; order Google CSE and Brave URLs alike: official hosts, other ``.cn``, then path quality."""
+    urls = _dedupe_url_list(urls)
     if not urls:
         return []
-    indexed = [(i, _url_path_quality(u), u) for i, u in enumerate(urls)]
-    indexed.sort(key=lambda t: (-t[1], t[0]))
-    return [t[2] for t in indexed]
+    rows: List[tuple[int, int, int, float, str]] = []
+    for i, u in enumerate(urls):
+        off, cn = _china_host_tier_scores(u)
+        pq = _url_path_quality(u)
+        rows.append((i, off, cn, pq, u))
+    rows.sort(key=lambda r: (-r[1], -r[2], -r[3], r[0]))
+    return [r[4] for r in rows]
 
 
 def _terms_for_relevance(blob: str) -> List[str]:
@@ -333,8 +348,9 @@ class ChinaRegulatoryAgent:
             num_results=min(max(1, num_results), 20),
             timeout=self.timeout,
             operators=True,
+            country="CN",
         )
-        return _filter_china_official_urls(raw)[:num_results]
+        return _rank_urls_by_quality(raw)[:num_results]
 
     async def _cse_urls(self, cse_query: str, num_results: int) -> List[str]:
         cx = self._cx()
@@ -402,7 +418,7 @@ class ChinaRegulatoryAgent:
                                 link = item.get("link")
                                 if link:
                                     urls.append(link)
-                            return urls
+                            return _rank_urls_by_quality(urls)
 
                     except httpx.RequestError as e:
                         backoff_s = min(30.0, 1.5 * (2**attempt))

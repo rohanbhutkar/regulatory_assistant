@@ -14,7 +14,6 @@ from agents.china_regulatory_agent import (
     _build_cse_query,
     _classify_portal,
     _expand_query_variations,
-    _filter_china_official_urls,
     _merge_url_batches,
     _rank_urls_by_quality,
     _relevance_score,
@@ -101,18 +100,20 @@ def test_build_cse_query_with_restricted_cx(monkeypatch) -> None:
     assert "抗肿瘤" in q
 
 
-def test_filter_china_official_urls_keeps_cde_nmpa_only() -> None:
+def test_rank_urls_prefers_official_then_cn_then_path() -> None:
     mixed = [
+        "https://fda.gov/a",
         "https://www.cde.org.cn/main/x",
+        "https://news.example.com/cn",
+        "https://www.gov.cn/foo",
         "https://www.nmpa.gov.cn/y",
-        "https://zwfw.nmpa.gov.cn/z",
-        "https://www.fda.gov/a",
     ]
-    assert _filter_china_official_urls(mixed) == [
-        "https://www.cde.org.cn/main/x",
-        "https://www.nmpa.gov.cn/y",
-        "https://zwfw.nmpa.gov.cn/z",
-    ]
+    out = _rank_urls_by_quality(mixed)
+    assert out[0] == "https://www.cde.org.cn/main/x"
+    assert out[1] == "https://www.nmpa.gov.cn/y"
+    assert "https://www.gov.cn/foo" in out
+    assert "https://fda.gov/a" in out
+    assert out.index("https://www.gov.cn/foo") < out.index("https://fda.gov/a")
 
 
 @pytest.mark.asyncio
