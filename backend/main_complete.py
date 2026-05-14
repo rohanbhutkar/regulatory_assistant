@@ -5,8 +5,9 @@ Complete FastAPI application with:
 3. WebSocket for multi-agent research
 4. All original functionality preserved
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -555,51 +556,88 @@ async def websocket_multiagent(websocket: WebSocket, client_id: str):
     finally:
         websocket_manager.disconnect(client_id)
 
-# REST endpoint for multi-agent research queries
-@app.post("/api/research/query")
-async def research_query(request: dict):
-    """REST endpoint for multi-agent research queries"""
+async def _execute_research_query_body(body: dict) -> dict:
+    """Run multi-agent research and return the JSON-serializable result dict."""
     if not reasoning_engine:
         raise HTTPException(status_code=503, detail="Reasoning engine not initialized")
-    
-    query = request.get("query", "")
+
+    query = body.get("query", "")
     if not query:
         raise HTTPException(status_code=400, detail="Query is required")
-    
+
     logger.info(f"📝 REST multi-agent research query: {query}")
-    
-    reg_ids = request.get("regulatory_document_ids") or []
+
+    reg_ids = body.get("regulatory_document_ids") or []
     regulatory_documents = regulatory_document_store.get_many(reg_ids) if reg_ids else []
-    selected_agents = request.get("selected_agents") or []
-    deep_research = request.get("deep_research")
+    selected_agents = body.get("selected_agents") or []
+    deep_research = body.get("deep_research")
 
     try:
-        # Process query
         response = await reasoning_engine.process_dynamic_query(
             query=query,
             include_graph_plan=True,
-            conversation_history=request.get("conversation_history") or [],
-            study_context=request.get("study_context"),
-            selected_trials=request.get("selected_trials"),
+            conversation_history=body.get("conversation_history") or [],
+            study_context=body.get("study_context"),
+            selected_trials=body.get("selected_trials"),
             regulatory_documents=regulatory_documents,
             selected_agents=selected_agents,
             deep_research=deep_research,
         )
-        
-        # Return result
         return {
             "success": True,
-            "synthesis": response.synthesis.dict() if hasattr(response, 'synthesis') else {"answer": str(response)},
-            "graph_plan": response.graph_plan.dict() if hasattr(response, 'graph_plan') and response.graph_plan else None,
-            "metadata": response.metadata.dict() if hasattr(response, 'metadata') else {},
+            "synthesis": response.synthesis.dict() if hasattr(response, "synthesis") else {"answer": str(response)},
+            "graph_plan": response.graph_plan.dict() if hasattr(response, "graph_plan") and response.graph_plan else None,
+            "metadata": response.metadata.dict() if hasattr(response, "metadata") else {},
             "execution_trace": _slim_execution_trace_for_ws(
                 getattr(response, "execution_trace", None) or []
             ),
         }
-    
     except Exception as e:
         logger.error(f"❌ Error processing multi-agent query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# REST endpoint for multi-agent research queries
+@app.post("/api/research/query")
+async def research_query(request: Request, body: dict = Body(...)):
+    """REST endpoint for multi-agent research queries.
+
+    When ``Accept`` includes ``text/event-stream``, responds with SSE: comment keepalives
+    every ~12s (so CloudFront / ALB do not close long runs) and a final ``event: result``
+    with the same JSON payload as the non-streaming response.
+    """
+    accept = (request.headers.get("accept") or "").lower()
+    if "text/event-stream" not in accept:
+        return await _execute_research_query_body(body)
+
+    async def events():
+        task = asyncio.create_task(_execute_research_query_body(body))
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=12.0)
+                if task.done():
+                    break
+                yield b": keepalive\n\n"
+            payload = await task
+        except HTTPException as he:
+            err = {"status": he.status_code, "detail": he.detail}
+            yield f"event: error\ndata: {json.dumps(err)}\n\n".encode()
+            return
+        except Exception as e:
+            logger.exception("research_query SSE task failed")
+            yield f"event: error\ndata: {json.dumps({'detail': str(e)})}\n\n".encode()
+            return
+        yield f"event: result\ndata: {json.dumps(payload)}\n\n".encode()
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 # Serve static files if available
 if os.path.exists("../frontend/public"):

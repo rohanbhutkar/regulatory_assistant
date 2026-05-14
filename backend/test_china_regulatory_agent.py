@@ -14,6 +14,7 @@ from agents.china_regulatory_agent import (
     _build_cse_query,
     _classify_portal,
     _expand_query_variations,
+    _filter_china_official_urls,
     _merge_url_batches,
     _rank_urls_by_quality,
     _relevance_score,
@@ -98,6 +99,92 @@ def test_build_cse_query_with_restricted_cx(monkeypatch) -> None:
     q = _build_cse_query("抗肿瘤 指导原则", None)
     assert "site:cde.org.cn" not in q
     assert "抗肿瘤" in q
+
+
+def test_filter_china_official_urls_keeps_cde_nmpa_only() -> None:
+    mixed = [
+        "https://www.cde.org.cn/main/x",
+        "https://www.nmpa.gov.cn/y",
+        "https://zwfw.nmpa.gov.cn/z",
+        "https://www.fda.gov/a",
+    ]
+    assert _filter_china_official_urls(mixed) == [
+        "https://www.cde.org.cn/main/x",
+        "https://www.nmpa.gov.cn/y",
+        "https://zwfw.nmpa.gov.cn/z",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cse_urls_retries_on_429(monkeypatch) -> None:
+    from config import settings
+
+    monkeypatch.setattr(settings, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
+    monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
+    monkeypatch.setattr(settings, "CHINA_REGULATORY_CSE_MAX_RETRIES", 5)
+    monkeypatch.setattr(settings, "BRAVE_API_KEY", "")
+
+    r429 = MagicMock()
+    r429.status_code = 429
+    r200 = MagicMock()
+    r200.status_code = 200
+    r200.raise_for_status = MagicMock()
+    r200.json = MagicMock(return_value={"items": [{"link": "https://www.cde.org.cn/x"}]})
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get = AsyncMock(side_effect=[r429, r429, r200])
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("agents.china_regulatory_agent.asyncio.sleep", sleep_mock)
+
+    agent = ChinaRegulatoryAgent()
+    with patch("agents.china_regulatory_agent.httpx.AsyncClient", return_value=mock_client):
+        with patch("agents.china_regulatory_agent.rate_limiter.acquire", new_callable=AsyncMock):
+            urls = await agent._cse_urls("test q", 5)
+
+    assert urls == ["https://www.cde.org.cn/x"]
+    assert mock_client.get.call_count == 3
+    assert sleep_mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cse_urls_429_returns_brave_urls(monkeypatch) -> None:
+    from config import settings
+
+    monkeypatch.setattr(settings, "GOOGLE_API_KEY", "k")
+    monkeypatch.setattr(settings, "GOOGLE_SEARCH_ENGINE_ID", "cx")
+    monkeypatch.setattr(settings, "GOOGLE_CSE_CHINA_ENGINE_ID", "")
+    monkeypatch.setattr(settings, "CHINA_REGULATORY_CSE_MAX_RETRIES", 3)
+    monkeypatch.setattr(settings, "BRAVE_API_KEY", "bk")
+
+    r429 = MagicMock()
+    r429.status_code = 429
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.get = AsyncMock(return_value=r429)
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("agents.china_regulatory_agent.asyncio.sleep", sleep_mock)
+
+    agent = ChinaRegulatoryAgent()
+    with patch("agents.china_regulatory_agent.httpx.AsyncClient", return_value=mock_client):
+        with patch("agents.china_regulatory_agent.rate_limiter.acquire", new_callable=AsyncMock):
+            with patch.object(
+                agent,
+                "_try_brave_cse_fallback",
+                new_callable=AsyncMock,
+                return_value=["https://www.cde.org.cn/from-brave"],
+            ) as brave_mock:
+                urls = await agent._cse_urls("test q", 5)
+
+    assert urls == ["https://www.cde.org.cn/from-brave"]
+    assert brave_mock.await_count >= 1
+    assert mock_client.get.call_count >= 1
 
 
 @pytest.mark.asyncio

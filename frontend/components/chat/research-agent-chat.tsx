@@ -266,17 +266,85 @@ export type ResearchRestResponse = {
   execution_trace?: unknown[]
 }
 
+function formatResearchHttpError(status: number, text: string): string {
+  const t = text || ""
+  if (t.includes("504 Gateway Timeout") || t.includes("ERROR: The request could not be satisfied")) {
+    return `Gateway timeout (HTTP ${status}). The CDN closed the connection before the backend finished. With the latest app, HTTP recovery uses streaming keepalives; redeploy backend + edge, or rely on WebSocket and a stable network.`
+  }
+  if (t.trimStart().startsWith("<!DOCTYPE") || t.trimStart().startsWith("<html")) {
+    return `HTTP ${status} returned an HTML error page instead of JSON (often a gateway timeout or WAF block).`
+  }
+  return t.length > 800 ? `${t.slice(0, 800)}…` : t || `Request failed (${status})`
+}
+
+/** Parse POST /api/research/query when server responds with ``text/event-stream`` (SSE keepalives + final result). */
+async function parseResearchSseResponse(res: Response): Promise<ResearchRestResponse> {
+  const reader = res.body?.getReader()
+  if (!reader) {
+    throw new Error("No response body to read for research stream.")
+  }
+  const decoder = new TextDecoder()
+  let buffer = ""
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (value) {
+      buffer += decoder.decode(value, { stream: !done })
+    }
+    let boundary: number
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+      const rawBlock = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const lines = rawBlock.split(/\r?\n/)
+      let eventType = ""
+      const dataParts: string[] = []
+      for (const line of lines) {
+        if (line.startsWith(":")) continue
+        if (line.startsWith("event:")) eventType = line.slice(6).trim()
+        else if (line.startsWith("data:")) dataParts.push(line.slice(5).trimStart())
+      }
+      const dataJoined = dataParts.join("\n")
+      if (eventType === "result" && dataJoined) {
+        return JSON.parse(dataJoined) as ResearchRestResponse
+      }
+      if (eventType === "error" && dataJoined) {
+        const err = JSON.parse(dataJoined) as { detail?: unknown; status?: number }
+        const detail =
+          typeof err.detail === "string"
+            ? err.detail
+            : err.detail != null
+              ? JSON.stringify(err.detail)
+              : "Research request failed"
+        throw new Error(detail)
+      }
+    }
+    if (done) break
+  }
+  throw new Error("Research stream ended before a result was received.")
+}
+
 async function fetchResearchViaRest(body: ResearchRestPayload): Promise<ResearchRestResponse> {
   const res = await fetch(`${getAgentHttpBase()}/api/research/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "text/event-stream, application/json;q=0.9, */*;q=0.8",
+    },
     body: JSON.stringify(body),
   })
-  const text = await res.text()
+  const ct = (res.headers.get("content-type") || "").toLowerCase()
   if (!res.ok) {
-    throw new Error(text?.slice(0, 500) || `Request failed (${res.status})`)
+    const text = await res.text()
+    throw new Error(formatResearchHttpError(res.status, text))
   }
-  return JSON.parse(text) as ResearchRestResponse
+  if (ct.includes("text/event-stream") && res.body) {
+    return parseResearchSseResponse(res)
+  }
+  const text = await res.text()
+  try {
+    return JSON.parse(text) as ResearchRestResponse
+  } catch {
+    throw new Error(formatResearchHttpError(res.status, text))
+  }
 }
 
 export interface ResearchAgentChatProps {

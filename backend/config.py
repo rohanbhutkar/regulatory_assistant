@@ -167,6 +167,13 @@ class Settings(BaseSettings):
     # Optional second CSE restricted to CDE/NMPA/zwfw hosts (omit redundant site: in query when set)
     GOOGLE_CSE_CHINA_ENGINE_ID: str = os.getenv("GOOGLE_CSE_CHINA_ENGINE_ID", "").strip()
     GOOGLE_CSE_BASE_URL: str = "https://www.googleapis.com/customsearch/v1"
+    # Brave Web Search API (used when Google CSE returns HTTP 429). Header: X-Subscription-Token
+    BRAVE_API_KEY: str = os.getenv("BRAVE_API_KEY", "").strip()
+    BRAVE_WEB_SEARCH_URL: str = (
+        os.getenv("BRAVE_WEB_SEARCH_URL", "https://api.search.brave.com/res/v1/web/search")
+        .strip()
+        .rstrip("/")
+    )
 
     # China regulatory agent (CDE / NMPA web discovery)
     CHINA_REGULATORY_TRANSLATE_SNIPPETS: bool = os.getenv(
@@ -180,11 +187,13 @@ class Settings(BaseSettings):
         os.getenv("CHINA_REGULATORY_QUERY_VARIATIONS_MAX", "5")
     )
     CHINA_REGULATORY_CSE_CONCURRENCY: int = int(
-        os.getenv("CHINA_REGULATORY_CSE_CONCURRENCY", "3")
+        os.getenv("CHINA_REGULATORY_CSE_CONCURRENCY", "2")
     )
     CHINA_REGULATORY_CSE_NUM_PER_VARIATION: int = int(
         os.getenv("CHINA_REGULATORY_CSE_NUM_PER_VARIATION", "6")
     )
+    # Per-query-stem retries when Google returns 429 / transient 5xx (each attempt re-acquires throttle).
+    CHINA_REGULATORY_CSE_MAX_RETRIES: int = int(os.getenv("CHINA_REGULATORY_CSE_MAX_RETRIES", "10"))
     # Max characters of fetched page text kept per China regulatory result (synthesis context).
     CHINA_REGULATORY_PAGE_MAX_CHARS: int = int(os.getenv("CHINA_REGULATORY_PAGE_MAX_CHARS", "20000"))
     # Max characters of fetched page text kept per google_search / FiercePharma-style web result.

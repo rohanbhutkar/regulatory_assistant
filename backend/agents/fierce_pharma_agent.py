@@ -8,9 +8,10 @@ import json
 from typing import List, Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 from config import settings
-from utils.logger import log_api_call, log_error
+from utils.logger import log_api_call, log_error, log_warning
 from utils.cache import cache_manager
 from utils.rate_limiter import rate_limiter
+from utils.brave_web_search import clip_brave_query, fetch_brave_web_urls
 from models.schemas import FiercePharmaResult
 from agents.llm_agent import llm_agent
 from datetime import datetime
@@ -186,6 +187,18 @@ class GoogleSearchAgent:
                 urls.append(item["link"])
         return urls
 
+    async def _brave_search_urls(self, brave_variants: List[str], num_results: int) -> List[str]:
+        """Brave Web Search when Google CSE returns 429."""
+        urls = await fetch_brave_web_urls(
+            brave_variants,
+            num_results=num_results,
+            timeout=self.timeout,
+            operators=False,
+        )
+        if urls:
+            print(f"✅ Found {len(urls)} URLs via Brave Web Search (Google CSE rate-limited)")
+        return urls
+
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
     async def _make_google_search(self, query: str, num_results: int = 10, search_instructions: str = None) -> List[str]:
         """Make Google Custom Search Engine API request with retry logic"""
@@ -205,6 +218,18 @@ class GoogleSearchAgent:
                 variants.insert(0, q)
         variants = variants[:14]
 
+        seen_br: set[str] = set()
+        brave_variants: List[str] = []
+        for v in variants:
+            bq = clip_brave_query(v)
+            if len(bq) < 2:
+                continue
+            kl = bq.lower()
+            if kl in seen_br:
+                continue
+            seen_br.add(kl)
+            brave_variants.append(bq)
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             start_time = asyncio.get_event_loop().time()
             last_data: Dict[str, Any] = {}
@@ -220,6 +245,13 @@ class GoogleSearchAgent:
                         "safe": "off",
                     }
                     response = await client.get(self.base_url, params=params, headers=headers)
+                    if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+                        print("⚠️ Google CSE returned 429; trying Brave Web Search")
+                        urls = await self._brave_search_urls(brave_variants, num_results)
+                        if urls:
+                            return urls[:num_results]
+                        print("⚠️ Brave Search returned no URLs after Google 429")
+                        return []
                     response.raise_for_status()
                     last_status = response.status_code
                     data = response.json()
@@ -251,14 +283,23 @@ class GoogleSearchAgent:
                 return await self._fallback_search(query, num_results, search_instructions)
 
             except httpx.HTTPStatusError as e:
-                error_detail = f"Google CSE API error: {e.response.status_code}"
+                if e.response is not None and e.response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+                    print("⚠️ Google CSE HTTP 429; trying Brave Web Search")
+                    urls = await self._brave_search_urls(brave_variants, num_results)
+                    if urls:
+                        return urls[:num_results]
+                    print("⚠️ Brave Search returned no URLs after Google CSE HTTP 429")
+                    return []
+                est = e.response.status_code if e.response is not None else 0
+                error_detail = f"Google CSE API error: {est}"
                 try:
-                    error_detail += f" - {e.response.text[:200]}"
+                    if e.response is not None:
+                        error_detail += f" - {e.response.text[:200]}"
                 except Exception:
                     pass
                 log_error(e, error_detail)
 
-                if e.response.status_code == 403 and "suspended" in e.response.text.lower():
+                if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
                     print("⚠️ Google API key suspended, using mock data")
                     return await self._get_mock_urls(query, num_results)
 
@@ -296,6 +337,18 @@ class GoogleSearchAgent:
             }
             variants = _google_cse_query_variants(query, search_instructions)
 
+            seen_br: set[str] = set()
+            brave_variants: List[str] = []
+            for v in variants:
+                bq = clip_brave_query(v)
+                if len(bq) < 2:
+                    continue
+                kl = bq.lower()
+                if kl in seen_br:
+                    continue
+                seen_br.add(kl)
+                brave_variants.append(bq)
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 try:
                     for q_try in variants:
@@ -307,6 +360,12 @@ class GoogleSearchAgent:
                             "safe": "off",
                         }
                         response = await client.get(self.base_url, params=params, headers=headers)
+                        if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+                            urls = await self._brave_search_urls(brave_variants, num_results)
+                            if urls:
+                                print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
+                                return urls[:num_results]
+                            return []
                         response.raise_for_status()
                         data = response.json()
                         urls = self._urls_from_cse_payload(data)
@@ -329,6 +388,12 @@ class GoogleSearchAgent:
                             "safe": "off",
                         }
                         response = await client.get(self.base_url, params=params, headers=headers)
+                        if response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+                            urls = await self._brave_search_urls(brave_variants, num_results)
+                            if urls:
+                                print(f"✅ Found {len(urls)} URLs via Brave (Google CSE 429 in fallback)")
+                                return urls[:num_results]
+                            return []
                         response.raise_for_status()
                         data = response.json()
                         urls = self._urls_from_cse_payload(data)
@@ -338,7 +403,13 @@ class GoogleSearchAgent:
                     return []
 
                 except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 403 and "suspended" in e.response.text.lower():
+                    if e.response is not None and e.response.status_code == 429 and (settings.BRAVE_API_KEY or "").strip():
+                        urls = await self._brave_search_urls(brave_variants, num_results)
+                        if urls:
+                            print(f"✅ Found {len(urls)} URLs via Brave (Google CSE HTTP 429 in fallback)")
+                            return urls[:num_results]
+                        return []
+                    if e.response is not None and e.response.status_code == 403 and "suspended" in e.response.text.lower():
                         print("⚠️ Google API key suspended in fallback, using mock data")
                         return await self._get_mock_urls(query, num_results)
                     raise e

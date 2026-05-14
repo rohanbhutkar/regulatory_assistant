@@ -21,8 +21,8 @@ class RateLimiter:
             "goodrx": Throttler(rate_limit=rate_limit, period=window),
             # EMA public APIs + bulk JSON refresh: stay conservative vs upstream
             "ema_eu": Throttler(rate_limit=min(20, rate_limit), period=window),
-            # CDE / NMPA: Google CSE + page fetches — separate budget from general google_search
-            "china_regulatory": Throttler(rate_limit=min(15, rate_limit), period=window),
+            # CDE / NMPA: Google CSE + page fetches — conservative vs Google per-minute quotas (429)
+            "china_regulatory": Throttler(rate_limit=min(5, rate_limit), period=window),
             "china_regulatory_content": Throttler(rate_limit=min(20, rate_limit), period=window),
             # Public APIs — stay polite vs upstream guidelines
             "nih_reporter": Throttler(rate_limit=1, period=2),
@@ -35,6 +35,8 @@ class RateLimiter:
             "isrctn": Throttler(rate_limit=min(6, rate_limit), period=window),
             "cms_open_data": Throttler(rate_limit=min(8, rate_limit), period=window),
             "fda_datadashboard": Throttler(rate_limit=min(4, rate_limit), period=window),
+            # Brave Web Search (fallback when Google CSE is rate-limited)
+            "brave_search": Throttler(rate_limit=min(12, rate_limit), period=window),
         }
         self.request_timestamps: Dict[str, list] = {
             "clinical_trials": [],
@@ -54,6 +56,7 @@ class RateLimiter:
             "isrctn": [],
             "cms_open_data": [],
             "fda_datadashboard": [],
+            "brave_search": [],
         }
     
     async def acquire(self, api_name: str) -> bool:

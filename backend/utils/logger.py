@@ -2,10 +2,29 @@
 Logging utilities for the Clinical Research Assistant
 """
 import os
+import re
 import sys
 from datetime import datetime
 from loguru import logger
 from config import settings
+
+
+def _redact_secrets_in_message(message: str) -> str:
+    """Strip API keys and similar tokens from log lines (e.g. httpx error URLs)."""
+    if not message:
+        return message
+    out = message
+    # Google APIs / CSE (query string or odd quoting in httpx errors)
+    out = re.sub(r"([?&])key=[^&\s'\"]+", r"\1key=<redacted>", out, flags=re.IGNORECASE)
+    out = re.sub(r"([?&])cx=[^&\s'\"]+", r"\1cx=<redacted>", out, flags=re.IGNORECASE)
+    out = re.sub(r"\bkey=AIza[\w-]{10,}", "key=<redacted>", out, flags=re.IGNORECASE)
+    out = re.sub(
+        r"https?://[^\s'\"<>]*googleapis\.com[^\s'\"<>]*",
+        "<redacted-google-url>",
+        out,
+        flags=re.IGNORECASE,
+    )
+    return out
 
 
 def _resolve_log_dir() -> str:
@@ -66,7 +85,12 @@ def log_api_call(api_name: str, endpoint: str, status_code: int, response_time: 
 
 def log_error(error: Exception, context: str = ""):
     """Log error with context"""
-    logger.error(f"Error in {context}: {str(error)}")
+    logger.error(f"Error in {context}: {_redact_secrets_in_message(str(error))}")
+
+
+def log_warning(message: str):
+    """Non-fatal operational warning (rate limits, retries, etc.)."""
+    logger.warning(_redact_secrets_in_message(message))
 
 def log_performance(operation: str, duration: float):
     """Log performance metrics"""

@@ -242,7 +242,7 @@ metadata:
     alb.ingress.kubernetes.io/subnets: ${PUBLIC_SUBNET_IDS}
     alb.ingress.kubernetes.io/healthcheck-path: /alb-health
     alb.ingress.kubernetes.io/success-codes: "200"
-    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=180,routing.http2.enabled=true
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600,routing.http2.enabled=true
     alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
     alb.ingress.kubernetes.io/tags: Project=lotor-regulatory-assistant,Environment=dev
 spec:
@@ -318,7 +318,7 @@ metadata:
     alb.ingress.kubernetes.io/subnets: ${PUBLIC_SUBNET_IDS}
     alb.ingress.kubernetes.io/healthcheck-path: /
     alb.ingress.kubernetes.io/success-codes: "200"
-    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=180,routing.http2.enabled=true
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=3600,routing.http2.enabled=true
     alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
     alb.ingress.kubernetes.io/tags: Project=lotor-regulatory-assistant,Environment=dev
 spec:

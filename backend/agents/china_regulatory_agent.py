@@ -8,6 +8,7 @@ metadata["content_en"] (off by default).
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 from datetime import datetime
 from typing import List, Optional, Sequence, Tuple, Union
@@ -15,16 +16,68 @@ from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from agents.llm_agent import llm_agent
 from config import settings
 from models.schemas import ChinaRegulatoryResult
 from utils.cache import cache_manager
-from utils.logger import log_api_call, log_error
+from utils.logger import log_api_call, log_error, log_warning
 from utils.rate_limiter import rate_limiter
+from utils.brave_web_search import clip_brave_query, fetch_brave_web_urls
 
 SITE_CLAUSE = "(site:cde.org.cn OR site:nmpa.gov.cn OR site:zwfw.nmpa.gov.cn)"
+
+# Graph execution runs many china_regulatory nodes concurrently; Google CSE is strict per-second.
+# Serialize all Custom Search HTTP calls process-wide (lock is cheap vs 429 storm).
+_CHINA_CSE_HTTP_LOCK = asyncio.Lock()
+
+
+def _china_regulatory_official_host(host: str) -> bool:
+    h = (host or "").lower()
+    if h.startswith("www."):
+        h = h[4:]
+    if not h:
+        return False
+    return h == "cde.org.cn" or h.endswith(".cde.org.cn") or h == "nmpa.gov.cn" or h.endswith(".nmpa.gov.cn")
+
+
+def _filter_china_official_urls(urls: List[str]) -> List[str]:
+    out: List[str] = []
+    seen: set[str] = set()
+    for u in urls:
+        try:
+            hn = urlparse(u).netloc or ""
+        except Exception:
+            continue
+        if _china_regulatory_official_host(hn) and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _china_brave_query_variants(cse_query: str) -> List[str]:
+    """Query stems for Brave when mirroring Google CSE strings (use ``operators=true`` at call site)."""
+    raw = (cse_query or "").strip()
+    seen: set[str] = set()
+    out: List[str] = []
+
+    def add(s: str) -> None:
+        b = clip_brave_query(s)
+        if len(b) < 2:
+            return
+        k = b.lower()
+        if k in seen:
+            return
+        seen.add(k)
+        out.append(b)
+
+    add(raw)
+    if SITE_CLAUSE in raw:
+        core = re.sub(r"\s+", " ", raw.replace(SITE_CLAUSE, "").strip())
+        if len(core) >= 2:
+            add(f"{core} (site:cde.org.cn OR site:nmpa.gov.cn OR site:zwfw.nmpa.gov.cn)")
+            add(f"{core} site:cde.org.cn")
+    return out[:8]
 
 
 def _classify_portal(url: str) -> str:
@@ -268,9 +321,22 @@ class ChinaRegulatoryAgent:
     def _cx(self) -> str:
         return (settings.GOOGLE_CSE_CHINA_ENGINE_ID or settings.GOOGLE_SEARCH_ENGINE_ID or "").strip()
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
+    async def _try_brave_cse_fallback(self, cse_query: str, num_results: int) -> List[str]:
+        """Brave Web Search with ``site:`` operators; keep only CDE/NMPA/zwfw hosts."""
+        if not (settings.BRAVE_API_KEY or "").strip():
+            return []
+        variants = _china_brave_query_variants(cse_query)
+        if not variants:
+            return []
+        raw = await fetch_brave_web_urls(
+            variants,
+            num_results=min(max(1, num_results), 20),
+            timeout=self.timeout,
+            operators=True,
+        )
+        return _filter_china_official_urls(raw)[:num_results]
+
     async def _cse_urls(self, cse_query: str, num_results: int) -> List[str]:
-        await rate_limiter.acquire("china_regulatory")
         cx = self._cx()
         if not self.api_key or not cx:
             return []
@@ -286,26 +352,91 @@ class ChinaRegulatoryAgent:
             "User-Agent": "Clinical-Knowledge-Agent/1.0",
             "Accept": "application/json",
         }
+        max_attempts = max(1, settings.CHINA_REGULATORY_CSE_MAX_RETRIES)
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            start = asyncio.get_event_loop().time()
-            try:
-                response = await client.get(self.base_url, params=params, headers=headers)
-                response.raise_for_status()
-                elapsed = asyncio.get_event_loop().time() - start
-                log_api_call("china_regulatory", "google_cse_search", response.status_code, elapsed)
-                data = response.json()
-                urls: List[str] = []
-                for item in data.get("items") or []:
-                    link = item.get("link")
-                    if link:
-                        urls.append(link)
-                return urls
-            except httpx.HTTPStatusError as e:
-                log_error(e, f"China regulatory CSE HTTP {e.response.status_code}")
-                return []
-            except Exception as e:
-                log_error(e, "China regulatory CSE")
-                return []
+            for attempt in range(max_attempts):
+                await rate_limiter.acquire("china_regulatory")
+                backoff_s: Optional[float] = None
+                try_brave_after_429 = False
+                async with _CHINA_CSE_HTTP_LOCK:
+                    start = asyncio.get_event_loop().time()
+                    try:
+                        response = await client.get(self.base_url, params=params, headers=headers)
+                        elapsed = asyncio.get_event_loop().time() - start
+                        sc = response.status_code
+
+                        if sc == 429:
+                            try_brave_after_429 = True
+                            backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                            log_warning(
+                                f"China regulatory Google CSE returned 429; "
+                                f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                            )
+                        elif sc in (502, 503):
+                            backoff_s = min(45.0, 1.5 * (2**attempt) + random.uniform(0.0, 0.5))
+                            log_warning(
+                                f"China regulatory Google CSE returned {sc}; "
+                                f"retrying in {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                            )
+                        else:
+                            response.raise_for_status()
+                            log_api_call("china_regulatory", "google_cse_search", sc, elapsed)
+                            data = response.json()
+                            urls: List[str] = []
+                            for item in data.get("items") or []:
+                                link = item.get("link")
+                                if link:
+                                    urls.append(link)
+                            return urls
+
+                    except httpx.RequestError as e:
+                        backoff_s = min(30.0, 1.5 * (2**attempt))
+                        log_error(e, f"China regulatory CSE network error (attempt {attempt + 1}/{max_attempts})")
+                    except httpx.HTTPStatusError as e:
+                        est = e.response.status_code
+                        if est == 429:
+                            try_brave_after_429 = True
+                            backoff_s = min(90.0, (2**attempt) + random.uniform(0.0, 0.75))
+                            log_warning(
+                                f"China regulatory Google CSE HTTPStatusError 429; "
+                                f"backing off {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                            )
+                        elif est in (502, 503):
+                            backoff_s = min(45.0, 1.5 * (2**attempt) + random.uniform(0.0, 0.5))
+                            log_warning(
+                                f"China regulatory Google CSE HTTP {est}; "
+                                f"retry in {backoff_s:.1f}s (attempt {attempt + 1}/{max_attempts})"
+                            )
+                        else:
+                            log_error(e, f"China regulatory CSE HTTP {est}")
+                            return []
+                    except Exception as e:
+                        log_error(e, "China regulatory CSE")
+                        return []
+
+                if try_brave_after_429:
+                    brave = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
+                    if brave:
+                        log_warning(
+                            "China regulatory: using Brave Web Search results after Google CSE 429"
+                        )
+                        return brave
+
+                if backoff_s is not None:
+                    await asyncio.sleep(backoff_s)
+                    continue
+
+        log_warning(
+            f"China regulatory Google CSE gave only 429/5xx after {max_attempts} attempt(s); "
+            "trying Brave Web Search once before giving up."
+        )
+        brave_last = await self._try_brave_cse_fallback(cse_query, int(params["num"]))
+        if brave_last:
+            log_warning("China regulatory: Brave Web Search supplied URLs after Google CSE retries exhausted")
+            return brave_last
+        log_warning("China regulatory: no URLs from Google CSE or Brave for this query stem.")
+        return []
 
     async def _cse_parallel(
         self,
@@ -313,7 +444,7 @@ class ChinaRegulatoryAgent:
         instructions: Optional[str],
         num_per_stem: int,
     ) -> List[List[str]]:
-        conc = max(1, min(6, settings.CHINA_REGULATORY_CSE_CONCURRENCY))
+        conc = max(1, min(4, settings.CHINA_REGULATORY_CSE_CONCURRENCY))
         sem = asyncio.Semaphore(conc)
 
         async def one(idx: int, stem: str) -> List[str]:
