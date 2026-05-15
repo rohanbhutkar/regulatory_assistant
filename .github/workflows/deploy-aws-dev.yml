@@ -239,6 +239,7 @@ jobs:
           OPENFDA_API_KEY: ${{ secrets.OPENFDA_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_SEARCH_ENGINE_ID: ${{ secrets.GOOGLE_SEARCH_ENGINE_ID }}
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           AACT_DB_USERNAME: ${{ secrets.AACT_DB_USERNAME }}
           AACT_DB_PASSWORD: ${{ secrets.AACT_DB_PASSWORD }}
           REGULATORY_DATABASE_URL: ${{ secrets.REGULATORY_DATABASE_URL }}
@@ -259,6 +260,7 @@ jobs:
             --from-literal=OPENFDA_API_KEY="${OPENFDA_API_KEY:-}" \
             --from-literal=GOOGLE_API_KEY="${GOOGLE_API_KEY:-}" \
             --from-literal=GOOGLE_SEARCH_ENGINE_ID="${GOOGLE_SEARCH_ENGINE_ID:-}" \
+            --from-literal=BRAVE_API_KEY="${BRAVE_API_KEY:-}" \
             --from-literal=AACT_DB_USERNAME="${AACT_DB_USERNAME:-}" \
             --from-literal=AACT_DB_PASSWORD="${AACT_DB_PASSWORD:-}" \
             --from-literal=DATABASE_URL="${REGULATORY_DATABASE_URL:-}" \

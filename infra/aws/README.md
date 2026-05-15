@@ -125,6 +125,7 @@ In GitHub: **Settings → Secrets and variables → Actions**.
 | `OPENFDA_API_KEY` | Higher OpenFDA rate limits | [openFDA API key](https://open.fda.gov/apis/authentication/) (optional). |
 | `GOOGLE_API_KEY` | Custom Search agent | Google Cloud API key with Custom Search API enabled. |
 | `GOOGLE_SEARCH_ENGINE_ID` | Custom Search agent | Programmable Search Engine **cx** ID. |
+| `BRAVE_API_KEY` | Google CSE 429 fallback + China regulatory Brave fallback | [Brave Search API](https://api.search.brave.com/) subscription token; without it, **`google_search` skips Brave** when Google returns 429. |
 | `AACT_DB_USERNAME` | AACT Postgres | CTTI AACT cloud DB username. |
 | `AACT_DB_PASSWORD` | AACT Postgres | CTTI AACT cloud DB password. |
 
