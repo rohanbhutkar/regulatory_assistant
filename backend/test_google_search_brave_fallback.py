@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents.fierce_pharma_agent import GoogleSearchAgent
-from utils.brave_web_search import clip_brave_query, resolved_brave_web_search_url, urls_from_brave_payload
+from utils.brave_web_search import (
+    clip_brave_query,
+    fetch_brave_web_urls,
+    resolved_brave_web_search_url,
+    urls_from_brave_payload,
+)
 
 
 def test_resolved_brave_web_search_url_host_only_gets_path() -> None:
@@ -111,6 +116,15 @@ async def test_google_429_brave_empty_then_google_after_backoff(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
+async def test_fetch_brave_web_urls_no_api_key_returns_empty(monkeypatch) -> None:
+    from config import settings
+
+    monkeypatch.setattr(settings, "BRAVE_API_KEY", "")
+    out = await fetch_brave_web_urls(["anything"], num_results=3, timeout=1.0)
+    assert out == []
+
+
+@pytest.mark.asyncio
 async def test_brave_search_urls_parses_web_results(monkeypatch) -> None:
     from config import settings
 
@@ -135,5 +149,7 @@ async def test_brave_search_urls_parses_web_results(monkeypatch) -> None:
 
     assert urls == ["https://a.test/1"]
     mock_client.get.assert_awaited_once()
-    call_kw = mock_client.get.await_args
-    assert "X-Subscription-Token" in (call_kw.kwargs.get("headers") or call_kw[1].get("headers", {}))
+    aw = mock_client.get.await_args
+    params = (aw.kwargs or {}).get("params") or {}
+    assert params.get("operators") == "false"
+    assert "X-Subscription-Token" in (aw.kwargs.get("headers") or {})

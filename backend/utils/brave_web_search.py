@@ -80,9 +80,16 @@ async def fetch_brave_web_urls(
     Call Brave Web Search for each variant until one returns web URLs.
 
     ``operators`` should be True when queries use ``site:`` (China CSE-style strings).
+
+    The Brave API defaults ``operators`` to **true** if the query param is omitted; we always
+    send ``operators=false`` or ``operators=true`` so plain queries (e.g. ``CAR-T``) are not
+    parsed as search operators.
     """
     token = (settings.BRAVE_API_KEY or "").strip()
-    if not token or not brave_variants:
+    if not token:
+        log_warning("Brave Web Search skipped: BRAVE_API_KEY is not set.")
+        return []
+    if not brave_variants:
         return []
 
     await rate_limiter.acquire("brave_search")
@@ -107,13 +114,12 @@ async def fetch_brave_web_urls(
                 "count": count,
                 "result_filter": "web",
                 "safesearch": "off",
+                "operators": "true" if operators else "false",
             }
             if country:
                 params["country"] = country
             if search_lang:
                 params["search_lang"] = search_lang
-            if operators:
-                params["operators"] = "true"
             t0 = asyncio.get_event_loop().time()
             try:
                 response = await client.get(base, params=params, headers=headers)
@@ -133,7 +139,18 @@ async def fetch_brave_web_urls(
                     log_api_call("brave_search", "brave_web_search", sc, elapsed)
                     return urls[:num_results]
                 web = data.get("web") if isinstance(data, dict) else None
-                if isinstance(web, dict) and web.get("results") == []:
+                if not isinstance(data, dict):
+                    log_warning("Brave Web Search returned 200 with non-object JSON body.")
+                elif not isinstance(web, dict):
+                    top = list(data.keys())[:15]
+                    log_warning(
+                        f"Brave Web Search 200 but no `web` object (top-level keys: {top}); query len={len(q_try)}."
+                    )
+                elif web.get("results") is None:
+                    log_warning(
+                        f"Brave Web Search 200 but `web.results` is null; query len={len(q_try)}."
+                    )
+                elif web.get("results") == []:
                     global _LAST_BRAVE_EMPTY_RESULTS_WARN_MONO
                     tmono = time.monotonic()
                     if tmono - _LAST_BRAVE_EMPTY_RESULTS_WARN_MONO > 45.0:
@@ -145,6 +162,13 @@ async def fetch_brave_web_urls(
                         log_debug(
                             f"Brave Web Search empty web.results (query len={len(q_try)}); throttled warning."
                         )
+                else:
+                    rows = web.get("results") or []
+                    sample = rows[0] if isinstance(rows[0], dict) else {}
+                    log_warning(
+                        "Brave Web Search 200 with web.results but no usable `url` in entries; "
+                        f"first result keys={list(sample.keys())[:12]!r}; query len={len(q_try)}."
+                    )
                 continue
             if sc == 429:
                 log_warning(
