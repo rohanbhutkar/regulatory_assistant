@@ -1910,6 +1910,7 @@ export function ResearchAgentChat({
                       "prose prose-sm max-w-xl mx-auto prose-slate dark:prose-invert text-center mb-10",
                       "prose-p:text-muted-foreground prose-p:text-sm sm:prose-p:text-base prose-p:leading-relaxed",
                       "[&_strong]:text-foreground/90",
+                      "[&_a]:font-medium [&_a]:text-blue-600 [&_a]:underline [&_a]:underline-offset-2 [&_a]:hover:text-blue-800 dark:[&_a]:text-blue-400 dark:[&_a]:hover:text-blue-300",
                     )}
                   >
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>

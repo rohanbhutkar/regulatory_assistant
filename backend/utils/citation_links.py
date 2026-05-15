@@ -7,6 +7,10 @@ import re
 from typing import Any, Dict, List, Optional
 
 _URL_IN_TEXT = re.compile(r"https?://[^\s\|\]\)\"'<>]+", re.IGNORECASE)
+_MD_LINK_RE = re.compile(
+    r"\[([^\]]*)\]\(\s*(https?://[^\s\)]+)\s*\)",
+    re.IGNORECASE,
+)
 
 
 def _strip_trailing_punct(url: str) -> str:
@@ -110,6 +114,26 @@ def citation_link_from_content(content: dict, layer_type: str) -> Optional[Dict[
     return None
 
 
+def citation_links_from_markdown(text: str) -> List[Dict[str, str]]:
+    """
+    Extract [label](https://...) pairs from synthesis markdown so the citations
+    footer matches links the model already inlined in the answer body.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+    out: List[Dict[str, str]] = []
+    for m in _MD_LINK_RE.finditer(text):
+        label = (m.group(1) or "").strip()
+        url = _strip_trailing_punct((m.group(2) or "").strip())
+        if not url:
+            continue
+        text_label = label or url
+        if len(text_label) > 500:
+            text_label = text_label[:497] + "..."
+        out.append({"text": text_label, "url": url})
+    return dedupe_citation_links(out)
+
+
 def dedupe_citation_links(links: List[Dict[str, str]]) -> List[Dict[str, str]]:
     seen: set = set()
     out: List[Dict[str, str]] = []
@@ -120,7 +144,12 @@ def dedupe_citation_links(links: List[Dict[str, str]]) -> List[Dict[str, str]]:
         url = (link.get("url") or "").strip()
         if not text and not url:
             continue
-        key = (url.lower(), text[:120].lower()) if url else (text[:200].lower(),)
+        # Prefer one row per URL so the footer is not cluttered; text-only rows dedupe by text prefix.
+        key: tuple
+        if url:
+            key = (url.lower(),)
+        else:
+            key = (text[:200].lower(),)
         if key in seen:
             continue
         seen.add(key)

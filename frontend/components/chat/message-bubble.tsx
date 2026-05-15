@@ -179,7 +179,9 @@ export function MessageBubble({
               "[&_pre]:text-xs [&_pre]:p-3 [&_pre]:my-2",
               "[&_blockquote]:text-sm [&_blockquote]:pl-3 [&_blockquote]:border-l-2 [&_blockquote]:my-2",
               !isUser && "[&>:not(.not-prose)]:max-w-[52rem]",
-              "[&_a]:text-sm [&_a]:underline [&_a]:underline-offset-2"
+              isUser && !ent
+                ? "[&_a]:text-sm [&_a]:font-medium [&_a]:text-sky-100 [&_a]:underline [&_a]:underline-offset-2 [&_a]:hover:text-white"
+                : "[&_a]:text-sm [&_a]:font-medium [&_a]:text-blue-600 [&_a]:underline [&_a]:underline-offset-2 [&_a]:hover:text-blue-800 dark:[&_a]:text-blue-400 dark:[&_a]:hover:text-blue-300"
             )}
           >
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
@@ -247,7 +249,7 @@ export function MessageBubble({
                         href={c.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-primary font-medium underline underline-offset-2 break-all hover:text-primary/90"
+                        className="font-medium text-blue-600 underline underline-offset-2 break-all hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
                       >
                         {c.text || c.url}
                       </a>

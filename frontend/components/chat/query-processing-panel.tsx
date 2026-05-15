@@ -210,7 +210,7 @@ export function QueryProcessingPanel({
                             key={j}
                             className="border-l-[3px] border-primary/35 pl-3 text-sm leading-relaxed text-foreground/90 [&_.prose]:my-0 [&_.prose_p]:mb-1 [&_.prose_p:last-child]:mb-0"
                           >
-                            <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5">
+                            <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_a]:font-medium [&_a]:text-blue-600 [&_a]:underline [&_a]:underline-offset-2 [&_a]:hover:text-blue-800 dark:[&_a]:text-blue-400 dark:[&_a]:hover:text-blue-300">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{t}</ReactMarkdown>
                             </div>
                           </li>
@@ -224,7 +224,7 @@ export function QueryProcessingPanel({
                             key={j}
                             className="border-l-[3px] border-muted-foreground/25 pl-3 text-sm leading-relaxed text-foreground/90 [&_.prose]:my-0 [&_.prose_p]:mb-1 [&_.prose_p:last-child]:mb-0"
                           >
-                            <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_li>p]:my-1 [&_li>p:first-child]:mt-0 [&_li>p:last-child]:mb-0">
+                            <div className="prose prose-sm max-w-none prose-slate dark:prose-invert [&_p]:whitespace-pre-wrap [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0.5 [&_li>p]:my-1 [&_li>p:first-child]:mt-0 [&_li>p:last-child]:mb-0 [&_a]:font-medium [&_a]:text-blue-600 [&_a]:underline [&_a]:underline-offset-2 [&_a]:hover:text-blue-800 dark:[&_a]:text-blue-400 dark:[&_a]:hover:text-blue-300">
                               <ReactMarkdown remarkPlugins={[remarkGfm]}>{b}</ReactMarkdown>
                             </div>
                           </div>

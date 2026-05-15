@@ -1,6 +1,7 @@
 """Unit tests for citation_links helpers."""
 from utils.citation_links import (
     citation_link_from_content,
+    citation_links_from_markdown,
     clinicaltrials_url,
     dedupe_citation_links,
     normalize_citation_entries,
@@ -61,3 +62,16 @@ def test_dedupe_citation_links():
         ]
     )
     assert len(d) == 2
+
+
+def test_citation_links_from_markdown():
+    md = "See [COFEPRIS overview](https://www.gob.mx/cofepris) and [duplicate](https://www.gob.mx/cofepris)."
+    out = citation_links_from_markdown(md)
+    assert len(out) == 1
+    assert out[0]["url"] == "https://www.gob.mx/cofepris"
+    assert "COFEPRIS" in out[0]["text"]
+
+
+def test_citation_links_from_markdown_strips_trailing_paren():
+    out = citation_links_from_markdown("[x](https://example.com/path).")
+    assert out[0]["url"] == "https://example.com/path"

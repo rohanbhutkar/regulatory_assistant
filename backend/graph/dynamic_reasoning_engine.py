@@ -46,7 +46,11 @@ from graph.synthesis_prompt_constants import (
     CLINICAL_SYNTHESIS_SYSTEM_PROMPT,
     regulatory_comparison_user_hint,
 )
-from utils.citation_links import citation_link_from_content, dedupe_citation_links
+from utils.citation_links import (
+    citation_link_from_content,
+    citation_links_from_markdown,
+    dedupe_citation_links,
+)
 from graph.truncation_utils import (
     calculate_dynamic_limits as _tu_calculate_dynamic_limits,
     emergency_truncation as _tu_emergency_truncation,
@@ -2488,13 +2492,16 @@ ANALYSIS REPORT:
                             # Structured citations with URLs for the frontend
                             citation_links: List[Dict[str, str]] = []
                             for layer in new_state["context_manager"].layers:
+                                attn_cut = 0.2 if layer.layer_type == "search" else 0.3
                                 for item in layer.items:
-                                    if item.attention_weight and item.attention_weight > 0.3:  # High attention items
+                                    if item.attention_weight and item.attention_weight > attn_cut:
                                         if isinstance(item.content, dict):
                                             link = citation_link_from_content(item.content, layer.layer_type)
                                             if link:
                                                 citation_links.append(link)
-                            citations = dedupe_citation_links(citation_links)
+                            citations = dedupe_citation_links(
+                                citation_links + citation_links_from_markdown(synthesis_answer)
+                            )
                             
                             synthesis = {
                                 "answer": synthesis_answer,
