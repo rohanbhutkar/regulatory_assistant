@@ -28,7 +28,7 @@ import type {
   QueryProcessingSnapshot,
   QueryStepDetail,
 } from "@/lib/types/chat-types"
-import { Trash2, Square, Terminal, User } from "lucide-react"
+import { Trash2, Square, User } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { useStudyDesignerOptional } from "@/lib/contexts/study-designer-context"
 import { ENDPOINTS } from "@/lib/config/api"
@@ -39,7 +39,6 @@ import {
   normalizeChatCitations,
 } from "@/lib/chat-citations"
 import { titleFromFirstUserMessage } from "@/lib/regulatory-chat-sessions"
-import { useBackendLogs } from "@/components/activity/logs-viewer"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
@@ -440,7 +439,6 @@ export function ResearchAgentChat({
   onResearchRunChange,
   onConfirmDeleteSession,
 }: ResearchAgentChatProps) {
-  const backendLogs = useBackendLogs()
   const studyDesigner = useStudyDesignerOptional()
   const agentActions = studyDesigner?.agentActions ?? null
   const studyContext = studyDesigner?.studyContext ?? null
@@ -507,8 +505,6 @@ export function ResearchAgentChat({
   const [querySteps, setQuerySteps] = useState<QueryStep[]>([])
   const [currentStep, setCurrentStep] = useState<string | undefined>()
   const [isLoading, setIsLoading] = useState(false)
-  /** When off, backend uses compact graph (fewer sources/steps). When on, full deep-research graph budget. */
-  const [deepResearchEnabled, setDeepResearchEnabled] = useState(false)
   const showRegulatoryEphemeralWelcome =
     variant === "regulatory" && messages.length === 0 && !isLoading
   const [deepResearchTimeline, setDeepResearchTimeline] = useState<DeepResearchTimelineEntry[]>([])
@@ -1033,7 +1029,7 @@ export function ResearchAgentChat({
       selected_agents: [],
       study_context: (studyContext as Record<string, unknown> | undefined) || undefined,
       selected_trials: selectedTrials || undefined,
-      deep_research: deepResearchEnabled,
+      deep_research: false,
       regulatory_document_ids:
         enableDocumentContext && regulatoryDocumentIds.length > 0
           ? regulatoryDocumentIds
@@ -1164,7 +1160,7 @@ export function ResearchAgentChat({
             study_context: studyContext || undefined,
             selected_trials: selectedTrials || undefined,
             workspace: variant,
-            deep_research: deepResearchEnabled,
+            deep_research: false,
             regulatory_document_ids:
               enableDocumentContext && regulatoryDocumentIds.length > 0
                 ? regulatoryDocumentIds
@@ -1793,21 +1789,6 @@ export function ResearchAgentChat({
             </Badge>
           </div>
           <div className="flex items-center gap-0.5 relative">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => backendLogs.open()}
-              className="h-9 w-9 rounded-full relative"
-              title="Backend logs"
-              type="button"
-            >
-              <Terminal className="h-4 w-4" />
-              {backendLogs.errorCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-0.5 text-[10px] font-medium text-destructive-foreground">
-                  {backendLogs.errorCount > 9 ? "9+" : backendLogs.errorCount}
-                </span>
-              )}
-            </Button>
             {isLoading && (
               <Button variant="outline" size="sm" onClick={handleStopGeneration} className="h-8 gap-1 rounded-full ml-1">
                 <Square className="h-3.5 w-3.5" />
@@ -1828,21 +1809,6 @@ export function ResearchAgentChat({
                 Stop
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => backendLogs.open()}
-              className="h-8 w-8 relative"
-              title="Backend logs"
-              type="button"
-            >
-              <Terminal className="h-3.5 w-3.5" />
-              {backendLogs.errorCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-destructive px-0.5 text-[9px] font-medium text-destructive-foreground">
-                  {backendLogs.errorCount > 9 ? "9+" : backendLogs.errorCount}
-                </span>
-              )}
-            </Button>
             <Button variant="ghost" size="icon" onClick={handleTrashButtonClick} className="h-8 w-8" title={onConfirmDeleteSession && sessionId ? "Delete chat" : "Clear chat"}>
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -2074,10 +2040,7 @@ export function ResearchAgentChat({
             fileAccept={fileAccept}
             variant={isEnterprise ? "enterprise" : "default"}
             composeRequest={composeRequest}
-            deepResearch={{
-              checked: deepResearchEnabled,
-              onCheckedChange: setDeepResearchEnabled,
-            }}
+            showDeepResearch
           />
         </div>
       </div>

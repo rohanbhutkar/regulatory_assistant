@@ -10,11 +10,6 @@ import { Switch } from "@/components/ui/switch"
 import { BarChart3, BookMarked, Loader2, Paperclip, Send } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-export type ChatInputDeepResearchProps = {
-  checked: boolean
-  onCheckedChange: (checked: boolean) => void
-}
-
 interface ChatInputProps {
   onSendMessage: (message: string, attachments?: File[]) => void
   isLoading?: boolean
@@ -25,8 +20,8 @@ interface ChatInputProps {
   toolbarRight?: React.ReactNode
   /** When `id` changes, replace the draft in the textarea and focus it (e.g. sample query chips). */
   composeRequest?: { id: number; text: string } | null
-  /** Renders next to the send button (compact vs full graph on the backend). */
-  deepResearch?: ChatInputDeepResearchProps | null
+  /** When true, shows a disabled deep-research control (access restricted). */
+  showDeepResearch?: boolean
 }
 
 export function ChatInput({
@@ -37,7 +32,7 @@ export function ChatInput({
   variant = "default",
   toolbarRight,
   composeRequest = null,
-  deepResearch = null,
+  showDeepResearch = false,
 }: ChatInputProps) {
   const deepResearchHintId = useId()
   const [message, setMessage] = useState("")
@@ -84,33 +79,26 @@ export function ChatInput({
   }
 
   const deepResearchToggle =
-    deepResearch != null ? (
+    showDeepResearch ? (
       <div
-        className="flex min-w-0 max-w-full items-center gap-1.5 shrink"
-        title={
-          deepResearch.checked
-            ? "Deep research on: full multi-step graph and more sources."
-            : "Deep research off: faster runs with up to 5 steps and 3 search sources."
-        }
+        className="flex min-w-0 max-w-full items-center gap-1.5 shrink opacity-60"
+        title="Access restricted"
       >
         <Switch
           id={deepResearchHintId}
-          checked={deepResearch.checked}
-          onCheckedChange={deepResearch.onCheckedChange}
-          disabled={isLoading}
+          checked={false}
+          disabled
           aria-describedby={`${deepResearchHintId}-desc`}
-          className="shrink-0 scale-90"
+          className="shrink-0 scale-90 pointer-events-none"
         />
         <Label
           htmlFor={deepResearchHintId}
-          className="min-w-0 truncate text-xs font-medium cursor-pointer text-muted-foreground leading-none"
+          className="min-w-0 truncate text-xs font-medium text-muted-foreground leading-none pointer-events-none cursor-not-allowed"
         >
           Deep research
         </Label>
         <span id={`${deepResearchHintId}-desc`} className="sr-only">
-          {deepResearch.checked
-            ? "Full multi-step graph and more sources."
-            : "Faster runs: up to 5 steps and 3 search sources."}
+          Access restricted.
         </span>
       </div>
     ) : null
